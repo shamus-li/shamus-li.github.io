@@ -1,0 +1,66 @@
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Shamus Li</title>
+        <meta name="description" content="Shamus Li is a graduate student at UC Berkeley majoring in Electrical Engineering and Computer Science." />
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta property="og:title" content="Shamus Li" />
+        <meta property="og:description" content="Shamus Li is a graduate student at UC Berkeley majoring in Electrical Engineering and Computer Science." />
+        <link rel="canonical" href="https://shamus.li/">
+        <link rel="stylesheet" href="static/styles/styles.css" />
+        <link rel="icon" type="image/x-icon" href="static/resources/favicon.png">
+    </head>
+    <body>
+        <div class="container">
+            <div class="title"><span id="typing">EECS</span> at Berkeley.</div>
+            <div class="photo"><img src="static/resources/shamus-picture.png" alt="Shamus Li"></div>
+        </div>
+        <div id="header">
+            <div id="name">Shamus Li</div>
+            <div>
+                <a href="static/resources/Shamus Resume.pdf" download="Shamus.pdf">Resume</a>
+                <a href="https://www.linkedin.com/in/shamus-li/">LinkedIn</a>
+            </div>
+        </div>
+        <script src="https://unpkg.com/typed.js@2.0.16/dist/typed.umd.js"></script>
+        <script>
+            var typed = new Typed("#typing", {
+                strings: ["Computer Vision", 
+                "Filmmaking", 
+                "Computational Photography",
+                "EECS",
+                "Image Processing",
+                "CAP Club",
+                "Machine Learning",
+                "Optics",
+                "Augmented Reality",
+                "Research",
+                "Graduate Student"],
+                startDelay: 10,
+                typeSpeed: 50,
+                backDelay: 1000,
+                backSpeed: 30,
+                loop: true,
+                showCursor: false
+            })
+        </script>
+        <script>
+            function adjustTitlePosition() {
+                const titleElement = document.querySelector('.title');
+                // Calculate the current font size of the title
+                const style = window.getComputedStyle(titleElement, null).getPropertyValue('font-size');
+                const currentFontSize = parseFloat(style);
+                if (window.innerHeight > 400) {
+                    const diff = 90 - currentFontSize;
+                    const newBottomValue = 75 + 0.05 * (diff / 2) + '%'; // 55% is the initial bottom value
+                    
+                    titleElement.style.bottom = newBottomValue;
+                } else {
+                    titleElement.style.bottom = '33vh'
+                }
+            }
+            adjustTitlePosition();
+            window.addEventListener('resize', adjustTitlePosition);
+        </script>
+    </body>
+</html>

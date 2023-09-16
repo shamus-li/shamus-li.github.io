@@ -1,0 +1,111 @@
+html,
+body {
+    background: var(--Background, linear-gradient(180deg, #000 0%, #02041A 56.25%));
+
+    letter-spacing: -0.01em;
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Helvetica", "Arial", sans-serif;
+
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -khtml-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
+#header {
+    display: flex;
+    justify-content: space-between;
+    position: fixed;
+    left: 40px;
+    right: 40px;
+    top: 40px;
+    font-size: min(20px, 4vw);
+    font-weight: 500;
+}
+
+.title {
+    font-size: min(90px, 5vw);
+    font-weight: 700;
+    color: rgb(255, 255, 255);
+    position: absolute;
+    bottom: 75%;
+    line-height: 1;
+    white-space: normal;
+    z-index: 1;
+}
+
+.photo img {
+    max-height: 80%;
+    pointer-events: none;
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    overflow: hidden;
+    z-index: 2;
+}
+
+.container {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    min-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    align-content: center;
+}
+
+@media (max-width: 700px) {
+    .title {
+        font-size: min(90px, 6.7vw);
+        display: flex;  /* Flex container */
+        flex-direction: column;  /* Reverse column order to push content upwards */
+        align-content: center;
+        justify-content: center;
+        align-items: center;  /* Align items to the start */
+    }
+
+    .title::before {
+        content: "";  /* Empty content for the pseudo-element */
+        flex-grow: 1;  /* Allow it to grow and take up available space */
+    }
+}
+
+@media (max-height: 400px) {
+    .title {
+        bottom: 30vh;
+    }
+
+    .photo img {
+        display: none;
+    }
+}
+
+#name {
+    font-weight: 700;
+    text-decoration: none;
+    display: inline;
+    color: #c7c7c7;
+}
+
+a {
+    font-weight: 700;
+    padding-left: min(10px, 1vw);
+    padding-right: min(10px, 1vw);
+    text-decoration: none;
+    cursor: pointer;
+    display: inline;
+}
+
+#header a:link,
+#header a:visited {
+    color: #c7c7c7;
+}
+
+#header a:hover {
+    color: rgb(180, 180, 180);
+} 
