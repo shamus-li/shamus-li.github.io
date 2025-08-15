@@ -1,6 +1,8 @@
 plugins:
   - jekyll-redirect-from
+whitelist:
+  - jekyll-redirect-from
 collections:
   links:
     output: true
-    
+    permalink: /:name/
