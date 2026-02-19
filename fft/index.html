@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Real Space <-> FFT Space Editor</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+    }
+
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: Canvas;
+      color: CanvasText;
+    }
+
+    .wrap {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(280px, 1fr));
+      gap: 16px;
+      align-items: start;
+    }
+
+    .card {
+      border: 1px solid color-mix(in oklab, CanvasText 15%, Canvas);
+      border-radius: 12px;
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      box-shadow: 0 4px 16px color-mix(in oklab, CanvasText 8%, transparent);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.05rem;
+    }
+
+    canvas {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border-radius: 8px;
+      background: #111;
+      image-rendering: pixelated;
+      touch-action: none;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    input,
+    button {
+      font: inherit;
+    }
+
+    .small {
+      font-size: 0.9rem;
+      opacity: 0.8;
+      line-height: 1.35;
+    }
+
+    .presets {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .preset-btn {
+      padding: 4px 8px;
+      border-radius: 8px;
+      border: 1px solid color-mix(in oklab, CanvasText 20%, Canvas);
+      background: color-mix(in oklab, Canvas 88%, CanvasText 4%);
+      cursor: pointer;
+    }
+
+    .preset-btn:hover {
+      background: color-mix(in oklab, Canvas 80%, CanvasText 8%);
+    }
+
+    @media (max-width: 860px) {
+      .wrap {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="card">
+      <h1>Real Space</h1>
+      <canvas id="realCanvas" width="256" height="256" aria-label="Real-space canvas"></canvas>
+      <div class="row">
+        <label>Brush <input id="realBrush" type="range" min="1" max="40" value="12"></label>
+        <button id="realClear">Clear</button>
+        <label><input id="realLive" type="checkbox" checked> Live -> FFT</label>
+        <button id="realUpdate">Update FFT</button>
+      </div>
+      <div class="row">
+        <label>Upload <input id="realFile" type="file" accept="image/*"></label>
+      </div>
+      <div class="presets" id="realPresets">
+        <button class="preset-btn" data-preset="dot">Dot</button>
+        <button class="preset-btn" data-preset="two-dots">Two Dots</button>
+        <button class="preset-btn" data-preset="line">Line</button>
+        <button class="preset-btn" data-preset="circle">Circle</button>
+        <button class="preset-btn" data-preset="grid">Grid</button>
+      </div>
+      <div class="small">Draw or upload here, then transform to FFT magnitude view.</div>
+    </section>
+
+    <section class="card">
+      <h1>FFT Space (Shifted Log Magnitude)</h1>
+      <canvas id="fftCanvas" width="256" height="256" aria-label="FFT-space canvas"></canvas>
+      <div class="row">
+        <label>Brush <input id="fftBrush" type="range" min="1" max="40" value="12"></label>
+        <button id="fftClear">Clear</button>
+        <label><input id="fftLive" type="checkbox" checked> Live -> Real</label>
+        <button id="fftUpdate">Update Real</button>
+      </div>
+      <div class="row">
+        <label>Upload <input id="fftFile" type="file" accept="image/*"></label>
+      </div>
+      <div class="presets" id="fftPresets">
+        <button class="preset-btn" data-preset="center">Center Dot</button>
+        <button class="preset-btn" data-preset="pair-x">Pair X</button>
+        <button class="preset-btn" data-preset="pair-y">Pair Y</button>
+        <button class="preset-btn" data-preset="diag-pair">Diag Pair</button>
+        <button class="preset-btn" data-preset="ring">Ring</button>
+        <button class="preset-btn" data-preset="cross">Cross</button>
+      </div>
+      <div class="small">Editing this side treats pixel intensity as spectrum magnitude and reconstructs real space using the latest stored phase.</div>
+    </section>
+  </div>
+
+  <script>
+    class Complex {
+      constructor(re = 0, im = 0) {
+        this.re = re;
+        this.im = im;
+      }
+    }
+
+    function cAdd(a, b) { return new Complex(a.re + b.re, a.im + b.im); }
+    function cSub(a, b) { return new Complex(a.re - b.re, a.im - b.im); }
+    function cMul(a, b) { return new Complex(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re); }
+    function cConj(a) { return new Complex(a.re, -a.im); }
+
+    const twiddleCache = new Map();
+    function twiddle(k, n) {
+      const key = `${n},${k}`;
+      let t = twiddleCache.get(key);
+      if (t) return t;
+      const angle = -2 * Math.PI * k / n;
+      t = new Complex(Math.cos(angle), Math.sin(angle));
+      twiddleCache.set(key, t);
+      return t;
+    }
+
+    function fft1d(signal) {
+      const n = signal.length;
+      if (n === 1) return [new Complex(signal[0].re, signal[0].im)];
+      if ((n & (n - 1)) !== 0) throw new Error('FFT length must be a power of 2');
+
+      const even = new Array(n / 2);
+      const odd = new Array(n / 2);
+      for (let i = 0; i < n / 2; i++) {
+        even[i] = signal[2 * i];
+        odd[i] = signal[2 * i + 1];
+      }
+
+      const fe = fft1d(even);
+      const fo = fft1d(odd);
+      const out = new Array(n);
+      for (let k = 0; k < n / 2; k++) {
+        const v = cMul(twiddle(k, n), fo[k]);
+        out[k] = cAdd(fe[k], v);
+        out[k + n / 2] = cSub(fe[k], v);
+      }
+      return out;
+    }
+
+    function ifft1d(signal) {
+      const n = signal.length;
+      const conj = signal.map(cConj);
+      const fwd = fft1d(conj);
+      return fwd.map(c => new Complex(c.re / n, -c.im / n));
+    }
+
+    function fft2d(realMatrix) {
+      const h = realMatrix.length;
+      const w = realMatrix[0].length;
+
+      const rowFFT = new Array(h);
+      for (let y = 0; y < h; y++) {
+        const row = new Array(w);
+        for (let x = 0; x < w; x++) row[x] = new Complex(realMatrix[y][x], 0);
+        rowFFT[y] = fft1d(row);
+      }
+
+      const out = Array.from({ length: h }, () => new Array(w));
+      for (let x = 0; x < w; x++) {
+        const col = new Array(h);
+        for (let y = 0; y < h; y++) col[y] = rowFFT[y][x];
+        const fcol = fft1d(col);
+        for (let y = 0; y < h; y++) out[y][x] = fcol[y];
+      }
+      return out;
+    }
+
+    function ifft2d(freqMatrix) {
+      const h = freqMatrix.length;
+      const w = freqMatrix[0].length;
+
+      const rowIFFT = new Array(h);
+      for (let y = 0; y < h; y++) rowIFFT[y] = ifft1d(freqMatrix[y]);
+
+      const out = Array.from({ length: h }, () => new Array(w));
+      for (let x = 0; x < w; x++) {
+        const col = new Array(h);
+        for (let y = 0; y < h; y++) col[y] = rowIFFT[y][x];
+        const icol = ifft1d(col);
+        for (let y = 0; y < h; y++) out[y][x] = icol[y];
+      }
+      return out;
+    }
+
+    function fftShift(matrix) {
+      const h = matrix.length;
+      const w = matrix[0].length;
+      const h2 = Math.floor(h / 2);
+      const w2 = Math.floor(w / 2);
+      const out = Array.from({ length: h }, () => new Array(w));
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          out[y][x] = matrix[(y + h2) % h][(x + w2) % w];
+        }
+      }
+      return out;
+    }
+
+    function matrixMagnitude(freqMatrix) {
+      const h = freqMatrix.length;
+      const w = freqMatrix[0].length;
+      const mag = Array.from({ length: h }, () => Array(w).fill(0));
+      let maxMag = 1e-12;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const c = freqMatrix[y][x];
+          const m = Math.hypot(c.re, c.im);
+          mag[y][x] = m;
+          if (m > maxMag) maxMag = m;
+        }
+      }
+      return { mag, maxMag };
+    }
+
+    function magnitudeToLog01(magMatrix, maxMag) {
+      const h = magMatrix.length;
+      const w = magMatrix[0].length;
+      const out = Array.from({ length: h }, () => Array(w).fill(0));
+      const logMax = Math.log(1 + maxMag);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          out[y][x] = logMax > 0 ? Math.log(1 + magMatrix[y][x]) / logMax : 0;
+        }
+      }
+      return out;
+    }
+
+    function estimateMagnitudeFromDisplay(v01) {
+      const LOG_RANGE = 6.0;
+      return Math.expm1(Math.max(0, Math.min(1, v01)) * LOG_RANGE);
+    }
+
+    function enforceHermitian(freqMatrix) {
+      const h = freqMatrix.length;
+      const w = freqMatrix[0].length;
+      const out = freqMatrix.map(row => row.map(c => new Complex(c.re, c.im)));
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const y2 = (h - y) % h;
+          const x2 = (w - x) % w;
+          if (y > y2 || (y === y2 && x > x2)) continue;
+          const a = out[y][x];
+          const b = out[y2][x2];
+          const avg = new Complex((a.re + b.re) / 2, (a.im - b.im) / 2);
+          out[y][x] = avg;
+          out[y2][x2] = cConj(avg);
+        }
+      }
+      return out;
+    }
+
+    const SIZE = 128;
+    const drawBuffer = document.createElement('canvas');
+    drawBuffer.width = SIZE;
+    drawBuffer.height = SIZE;
+    const drawBufCtx = drawBuffer.getContext('2d');
+
+    const putBuffer = document.createElement('canvas');
+    putBuffer.width = SIZE;
+    putBuffer.height = SIZE;
+    const putBufCtx = putBuffer.getContext('2d');
+
+    const realCanvas = document.getElementById('realCanvas');
+    const fftCanvas = document.getElementById('fftCanvas');
+    const realCtx = realCanvas.getContext('2d');
+    const fftCtx = fftCanvas.getContext('2d');
+
+    const realBrush = document.getElementById('realBrush');
+    const fftBrush = document.getElementById('fftBrush');
+    const realClear = document.getElementById('realClear');
+    const fftClear = document.getElementById('fftClear');
+    const realUpdate = document.getElementById('realUpdate');
+    const fftUpdate = document.getElementById('fftUpdate');
+    const realLive = document.getElementById('realLive');
+    const fftLive = document.getElementById('fftLive');
+    const realFile = document.getElementById('realFile');
+    const fftFile = document.getElementById('fftFile');
+    const realPresets = document.getElementById('realPresets');
+    const fftPresets = document.getElementById('fftPresets');
+
+    let phaseMatrix = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+
+    function clearCanvas(ctx, canvas) {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+      ctx.strokeStyle = '#fff';
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+    }
+
+    function canvasPoint(canvas, e) {
+      const rect = canvas.getBoundingClientRect();
+      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
+      return { x: px, y: py };
+    }
+
+    function attachPainter(canvas, ctx, brushInput, shouldLiveSync, scheduleSync) {
+      let drawing = false;
+      let last = null;
+
+      function stopDrawing() {
+        if (!drawing) return;
+        drawing = false;
+        last = null;
+        if (shouldLiveSync()) scheduleSync();
+      }
+
+      canvas.addEventListener('pointerdown', (e) => {
+        drawing = true;
+        last = canvasPoint(canvas, e);
+        ctx.lineWidth = Number(brushInput.value);
+        canvas.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      });
+
+      canvas.addEventListener('pointermove', (e) => {
+        if (!drawing) return;
+        const p = canvasPoint(canvas, e);
+        ctx.lineWidth = Number(brushInput.value);
+        ctx.beginPath();
+        ctx.moveTo(last.x, last.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        last = p;
+        if (shouldLiveSync()) scheduleSync();
+        e.preventDefault();
+      });
+
+      canvas.addEventListener('pointerup', stopDrawing);
+      canvas.addEventListener('pointercancel', stopDrawing);
+      canvas.addEventListener('pointerleave', stopDrawing);
+    }
+
+    function drawImageIntoCanvas(img, ctx, canvas) {
+      clearCanvas(ctx, canvas);
+      const iw = img.naturalWidth || img.width;
+      const ih = img.naturalHeight || img.height;
+      const s = Math.min(canvas.width / iw, canvas.height / ih);
+      const dw = Math.max(1, Math.round(iw * s));
+      const dh = Math.max(1, Math.round(ih * s));
+      const dx = Math.floor((canvas.width - dw) / 2);
+      const dy = Math.floor((canvas.height - dh) / 2);
+      ctx.drawImage(img, dx, dy, dw, dh);
+    }
+
+    function readFileAsImage(file) {
+      return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onerror = () => reject(fr.error);
+        fr.onload = () => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = fr.result;
+        };
+        fr.readAsDataURL(file);
+      });
+    }
+
+    function bindImageInput(input, ctx, canvas, onLoaded) {
+      input.addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        try {
+          const img = await readFileAsImage(file);
+          drawImageIntoCanvas(img, ctx, canvas);
+          onLoaded();
+        } catch (err) {
+          console.error(err);
+        }
+      });
+
+      ['dragenter', 'dragover'].forEach(type => {
+        canvas.addEventListener(type, (e) => {
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        });
+      });
+
+      canvas.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (!file) return;
+        try {
+          const img = await readFileAsImage(file);
+          drawImageIntoCanvas(img, ctx, canvas);
+          onLoaded();
+        } catch (err) {
+          console.error(err);
+        }
+      });
+    }
+
+    function canvasToGray01(canvas) {
+      drawBufCtx.clearRect(0, 0, SIZE, SIZE);
+      drawBufCtx.drawImage(canvas, 0, 0, SIZE, SIZE);
+      const img = drawBufCtx.getImageData(0, 0, SIZE, SIZE);
+      const out = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          const i = (y * SIZE + x) * 4;
+          const r = img.data[i];
+          const g = img.data[i + 1];
+          const b = img.data[i + 2];
+          out[y][x] = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+        }
+      }
+      return out;
+    }
+
+    function renderGray01ToCanvas(grayMatrix, ctx, canvas) {
+      const imgData = putBufCtx.createImageData(SIZE, SIZE);
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          const v = Math.max(0, Math.min(1, grayMatrix[y][x]));
+          const c = Math.round(v * 255);
+          const i = (y * SIZE + x) * 4;
+          imgData.data[i] = c;
+          imgData.data[i + 1] = c;
+          imgData.data[i + 2] = c;
+          imgData.data[i + 3] = 255;
+        }
+      }
+      putBufCtx.putImageData(imgData, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(putBuffer, 0, 0, canvas.width, canvas.height);
+    }
+
+    function updateFFTFromReal() {
+      const real = canvasToGray01(realCanvas);
+      const freq = fft2d(real);
+
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          phaseMatrix[y][x] = Math.atan2(freq[y][x].im, freq[y][x].re);
+        }
+      }
+
+      const { mag, maxMag } = matrixMagnitude(freq);
+      const log01 = magnitudeToLog01(mag, maxMag);
+      renderGray01ToCanvas(fftShift(log01), fftCtx, fftCanvas);
+    }
+
+    function updateRealFromFFT() {
+      const shiftedLog01 = canvasToGray01(fftCanvas);
+      const shiftedMag = shiftedLog01.map(row => row.map(estimateMagnitudeFromDisplay));
+      const mag = fftShift(shiftedMag);
+
+      const freq = Array.from({ length: SIZE }, (_, y) =>
+        Array.from({ length: SIZE }, (_, x) => {
+          const m = mag[y][x];
+          const ph = phaseMatrix[y][x] || 0;
+          return new Complex(m * Math.cos(ph), m * Math.sin(ph));
+        })
+      );
+
+      const symmetricFreq = enforceHermitian(freq);
+      const spatial = ifft2d(symmetricFreq);
+
+      let minVal = Infinity;
+      let maxVal = -Infinity;
+      const realPart = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          const v = spatial[y][x].re;
+          realPart[y][x] = v;
+          if (v < minVal) minVal = v;
+          if (v > maxVal) maxVal = v;
+        }
+      }
+
+      const span = Math.max(1e-12, maxVal - minVal);
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          realPart[y][x] = (realPart[y][x] - minVal) / span;
+        }
+      }
+
+      renderGray01ToCanvas(realPart, realCtx, realCanvas);
+    }
+
+    function fillCircle(ctx, x, y, r) {
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function applyRealPreset(kind) {
+      clearCanvas(realCtx, realCanvas);
+      const w = realCanvas.width;
+      const h = realCanvas.height;
+      const cx = w / 2;
+      const cy = h / 2;
+
+      realCtx.fillStyle = '#fff';
+      realCtx.strokeStyle = '#fff';
+
+      if (kind === 'dot') {
+        fillCircle(realCtx, cx, cy, 8);
+      } else if (kind === 'two-dots') {
+        fillCircle(realCtx, cx - 30, cy, 8);
+        fillCircle(realCtx, cx + 30, cy, 8);
+      } else if (kind === 'line') {
+        realCtx.lineWidth = 5;
+        realCtx.beginPath();
+        realCtx.moveTo(24, h - 24);
+        realCtx.lineTo(w - 24, 24);
+        realCtx.stroke();
+      } else if (kind === 'circle') {
+        realCtx.lineWidth = 5;
+        realCtx.beginPath();
+        realCtx.arc(cx, cy, 52, 0, Math.PI * 2);
+        realCtx.stroke();
+      } else if (kind === 'grid') {
+        realCtx.lineWidth = 2;
+        for (let k = 24; k <= w - 24; k += 24) {
+          realCtx.beginPath();
+          realCtx.moveTo(k, 16);
+          realCtx.lineTo(k, h - 16);
+          realCtx.stroke();
+          realCtx.beginPath();
+          realCtx.moveTo(16, k);
+          realCtx.lineTo(w - 16, k);
+          realCtx.stroke();
+        }
+      }
+      updateFFTFromReal();
+    }
+
+    function applyFFTPreset(kind) {
+      clearCanvas(fftCtx, fftCanvas);
+      const w = fftCanvas.width;
+      const h = fftCanvas.height;
+      const cx = w / 2;
+      const cy = h / 2;
+      fftCtx.fillStyle = '#fff';
+      fftCtx.strokeStyle = '#fff';
+
+      const pair = (dx, dy, r = 7) => {
+        fillCircle(fftCtx, cx + dx, cy + dy, r);
+        fillCircle(fftCtx, cx - dx, cy - dy, r);
+      };
+
+      if (kind === 'center') {
+        fillCircle(fftCtx, cx, cy, 9);
+      } else if (kind === 'pair-x') {
+        pair(26, 0, 7);
+      } else if (kind === 'pair-y') {
+        pair(0, 26, 7);
+      } else if (kind === 'diag-pair') {
+        pair(22, 22, 7);
+      } else if (kind === 'ring') {
+        fftCtx.lineWidth = 4;
+        fftCtx.beginPath();
+        fftCtx.arc(cx, cy, 28, 0, Math.PI * 2);
+        fftCtx.stroke();
+      } else if (kind === 'cross') {
+        fftCtx.lineWidth = 4;
+        fftCtx.beginPath();
+        fftCtx.moveTo(cx, 14);
+        fftCtx.lineTo(cx, h - 14);
+        fftCtx.stroke();
+        fftCtx.beginPath();
+        fftCtx.moveTo(14, cy);
+        fftCtx.lineTo(w - 14, cy);
+        fftCtx.stroke();
+      }
+      updateRealFromFFT();
+    }
+
+    let realSyncRaf = false;
+    let fftSyncRaf = false;
+
+    function scheduleRealToFFT() {
+      if (realSyncRaf) return;
+      realSyncRaf = true;
+      requestAnimationFrame(() => {
+        realSyncRaf = false;
+        updateFFTFromReal();
+      });
+    }
+
+    function scheduleFFTToReal() {
+      if (fftSyncRaf) return;
+      fftSyncRaf = true;
+      requestAnimationFrame(() => {
+        fftSyncRaf = false;
+        updateRealFromFFT();
+      });
+    }
+
+    clearCanvas(realCtx, realCanvas);
+    clearCanvas(fftCtx, fftCanvas);
+
+    attachPainter(realCanvas, realCtx, realBrush, () => realLive.checked, scheduleRealToFFT);
+    attachPainter(fftCanvas, fftCtx, fftBrush, () => fftLive.checked, scheduleFFTToReal);
+
+    realClear.addEventListener('click', () => {
+      clearCanvas(realCtx, realCanvas);
+      updateFFTFromReal();
+    });
+
+    fftClear.addEventListener('click', () => {
+      clearCanvas(fftCtx, fftCanvas);
+      updateRealFromFFT();
+    });
+
+    realUpdate.addEventListener('click', updateFFTFromReal);
+    fftUpdate.addEventListener('click', updateRealFromFFT);
+    realPresets.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-preset]');
+      if (!btn) return;
+      applyRealPreset(btn.dataset.preset);
+    });
+    fftPresets.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-preset]');
+      if (!btn) return;
+      applyFFTPreset(btn.dataset.preset);
+    });
+
+    bindImageInput(realFile, realCtx, realCanvas, updateFFTFromReal);
+    bindImageInput(fftFile, fftCtx, fftCanvas, updateRealFromFFT);
+
+    let activeCanvas = 'real';
+    realCanvas.addEventListener('pointerdown', () => { activeCanvas = 'real'; });
+    fftCanvas.addEventListener('pointerdown', () => { activeCanvas = 'fft'; });
+
+    document.addEventListener('paste', async (e) => {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      for (const item of items) {
+        if (!item.type.startsWith('image/')) continue;
+        const file = item.getAsFile();
+        if (!file) continue;
+        try {
+          const img = await readFileAsImage(file);
+          if (activeCanvas === 'fft') {
+            drawImageIntoCanvas(img, fftCtx, fftCanvas);
+            updateRealFromFFT();
+          } else {
+            drawImageIntoCanvas(img, realCtx, realCanvas);
+            updateFFTFromReal();
+          }
+        } catch (err) {
+          console.error(err);
+        }
+        break;
+      }
+    });
+
+    updateFFTFromReal();
+  </script>
+</body>
+</html>
