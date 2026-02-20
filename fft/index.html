@@ -83,6 +83,11 @@
       background: color-mix(in oklab, Canvas 80%, CanvasText 8%);
     }
 
+    .toggle-on {
+      background: color-mix(in oklab, Canvas 70%, CanvasText 18%);
+      border-color: color-mix(in oklab, CanvasText 35%, Canvas);
+    }
+
     @media (max-width: 860px) {
       .wrap {
         grid-template-columns: 1fr;
@@ -98,6 +103,7 @@
       <div class="row">
         <label>Brush <input id="realBrush" type="range" min="1" max="40" value="12"></label>
         <button id="realClear">Clear</button>
+        <button id="realEraser" type="button">Eraser: Off</button>
         <label><input id="realLive" type="checkbox" checked> Live -> FFT</label>
         <button id="realUpdate">Update FFT</button>
       </div>
@@ -118,8 +124,9 @@
       <h1>FFT Space (Shifted Log Magnitude)</h1>
       <canvas id="fftCanvas" width="256" height="256" aria-label="FFT-space canvas"></canvas>
       <div class="row">
-        <label>Brush <input id="fftBrush" type="range" min="1" max="40" value="12"></label>
+        <label>Brush <input id="fftBrush" type="range" min="1" max="40" value="6"></label>
         <button id="fftClear">Clear</button>
+        <button id="fftEraser" type="button">Eraser: Off</button>
         <label><input id="fftLive" type="checkbox" checked> Live -> Real</label>
         <button id="fftUpdate">Update Real</button>
       </div>
@@ -134,7 +141,7 @@
         <button class="preset-btn" data-preset="ring">Ring</button>
         <button class="preset-btn" data-preset="cross">Cross</button>
       </div>
-      <div class="small">Editing this side treats pixel intensity as spectrum magnitude and reconstructs real space using the latest stored phase.</div>
+      <div class="small">Editing this side treats pixel intensity as spectrum magnitude and reconstructs real space using preserved phase from the latest real-space FFT.</div>
     </section>
   </div>
 
@@ -244,6 +251,20 @@
       return out;
     }
 
+    function ifftShift(matrix) {
+      const h = matrix.length;
+      const w = matrix[0].length;
+      const h2 = Math.ceil(h / 2);
+      const w2 = Math.ceil(w / 2);
+      const out = Array.from({ length: h }, () => new Array(w));
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          out[y][x] = matrix[(y + h2) % h][(x + w2) % w];
+        }
+      }
+      return out;
+    }
+
     function matrixMagnitude(freqMatrix) {
       const h = freqMatrix.length;
       const w = freqMatrix[0].length;
@@ -260,22 +281,22 @@
       return { mag, maxMag };
     }
 
-    function magnitudeToLog01(magMatrix, maxMag) {
+    function magnitudeToLog01(magMatrix, logRange) {
       const h = magMatrix.length;
       const w = magMatrix[0].length;
       const out = Array.from({ length: h }, () => Array(w).fill(0));
-      const logMax = Math.log(1 + maxMag);
+      const safeLogRange = Math.max(1e-12, logRange);
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
-          out[y][x] = logMax > 0 ? Math.log(1 + magMatrix[y][x]) / logMax : 0;
+          out[y][x] = Math.log(1 + magMatrix[y][x]) / safeLogRange;
         }
       }
       return out;
     }
 
-    function estimateMagnitudeFromDisplay(v01) {
-      const LOG_RANGE = 6.0;
-      return Math.expm1(Math.max(0, Math.min(1, v01)) * LOG_RANGE);
+    function estimateMagnitudeFromDisplay(v01, logRange) {
+      const safeLogRange = Math.max(1e-12, logRange);
+      return Math.expm1(Math.max(0, Math.min(1, v01)) * safeLogRange);
     }
 
     function enforceHermitian(freqMatrix) {
@@ -297,7 +318,11 @@
       return out;
     }
 
-    const SIZE = 128;
+    const realCanvas = document.getElementById('realCanvas');
+    const fftCanvas = document.getElementById('fftCanvas');
+    const realCtx = realCanvas.getContext('2d');
+    const fftCtx = fftCanvas.getContext('2d');
+    const SIZE = realCanvas.width;
     const drawBuffer = document.createElement('canvas');
     drawBuffer.width = SIZE;
     drawBuffer.height = SIZE;
@@ -308,15 +333,12 @@
     putBuffer.height = SIZE;
     const putBufCtx = putBuffer.getContext('2d');
 
-    const realCanvas = document.getElementById('realCanvas');
-    const fftCanvas = document.getElementById('fftCanvas');
-    const realCtx = realCanvas.getContext('2d');
-    const fftCtx = fftCanvas.getContext('2d');
-
     const realBrush = document.getElementById('realBrush');
     const fftBrush = document.getElementById('fftBrush');
     const realClear = document.getElementById('realClear');
     const fftClear = document.getElementById('fftClear');
+    const realEraser = document.getElementById('realEraser');
+    const fftEraser = document.getElementById('fftEraser');
     const realUpdate = document.getElementById('realUpdate');
     const fftUpdate = document.getElementById('fftUpdate');
     const realLive = document.getElementById('realLive');
@@ -326,7 +348,11 @@
     const realPresets = document.getElementById('realPresets');
     const fftPresets = document.getElementById('fftPresets');
 
+    const DEFAULT_DISPLAY_LOG_RANGE = 6.0;
+    let displayLogRange = DEFAULT_DISPLAY_LOG_RANGE;
     let phaseMatrix = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+    let realErasing = false;
+    let fftErasing = false;
 
     function clearCanvas(ctx, canvas) {
       ctx.save();
@@ -346,7 +372,7 @@
       return { x: px, y: py };
     }
 
-    function attachPainter(canvas, ctx, brushInput, shouldLiveSync, scheduleSync) {
+    function attachPainter(canvas, ctx, brushInput, shouldLiveSync, scheduleSync, getStrokeStyle) {
       let drawing = false;
       let last = null;
 
@@ -361,6 +387,7 @@
         drawing = true;
         last = canvasPoint(canvas, e);
         ctx.lineWidth = Number(brushInput.value);
+        ctx.strokeStyle = getStrokeStyle();
         canvas.setPointerCapture(e.pointerId);
         e.preventDefault();
       });
@@ -369,6 +396,7 @@
         if (!drawing) return;
         const p = canvasPoint(canvas, e);
         ctx.lineWidth = Number(brushInput.value);
+        ctx.strokeStyle = getStrokeStyle();
         ctx.beginPath();
         ctx.moveTo(last.x, last.y);
         ctx.lineTo(p.x, p.y);
@@ -381,6 +409,11 @@
       canvas.addEventListener('pointerup', stopDrawing);
       canvas.addEventListener('pointercancel', stopDrawing);
       canvas.addEventListener('pointerleave', stopDrawing);
+    }
+
+    function setEraserButtonState(button, isOn) {
+      button.textContent = isOn ? 'Eraser: On' : 'Eraser: Off';
+      button.classList.toggle('toggle-on', isOn);
     }
 
     function drawImageIntoCanvas(img, ctx, canvas) {
@@ -490,14 +523,16 @@
       }
 
       const { mag, maxMag } = matrixMagnitude(freq);
-      const log01 = magnitudeToLog01(mag, maxMag);
+      const measuredLogRange = Math.log(1 + maxMag);
+      displayLogRange = measuredLogRange > 1e-9 ? measuredLogRange : DEFAULT_DISPLAY_LOG_RANGE;
+      const log01 = magnitudeToLog01(mag, displayLogRange);
       renderGray01ToCanvas(fftShift(log01), fftCtx, fftCanvas);
     }
 
     function updateRealFromFFT() {
       const shiftedLog01 = canvasToGray01(fftCanvas);
-      const shiftedMag = shiftedLog01.map(row => row.map(estimateMagnitudeFromDisplay));
-      const mag = fftShift(shiftedMag);
+      const shiftedMag = shiftedLog01.map(row => row.map(v => estimateMagnitudeFromDisplay(v, displayLogRange)));
+      const mag = ifftShift(shiftedMag);
 
       const freq = Array.from({ length: SIZE }, (_, y) =>
         Array.from({ length: SIZE }, (_, x) => {
@@ -522,10 +557,19 @@
         }
       }
 
-      const span = Math.max(1e-12, maxVal - minVal);
-      for (let y = 0; y < SIZE; y++) {
-        for (let x = 0; x < SIZE; x++) {
-          realPart[y][x] = (realPart[y][x] - minVal) / span;
+      const span = maxVal - minVal;
+      if (span < 1e-9) {
+        const constant = Math.max(0, Math.min(1, Number.isFinite(minVal) ? minVal : 0));
+        for (let y = 0; y < SIZE; y++) {
+          for (let x = 0; x < SIZE; x++) {
+            realPart[y][x] = constant;
+          }
+        }
+      } else {
+        for (let y = 0; y < SIZE; y++) {
+          for (let x = 0; x < SIZE; x++) {
+            realPart[y][x] = (realPart[y][x] - minVal) / span;
+          }
         }
       }
 
@@ -536,6 +580,12 @@
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    function fillPixel(ctx, x, y) {
+      const xi = Math.max(0, Math.min(ctx.canvas.width - 1, Math.round(x)));
+      const yi = Math.max(0, Math.min(ctx.canvas.height - 1, Math.round(y)));
+      ctx.fillRect(xi, yi, 1, 1);
     }
 
     function applyRealPreset(kind) {
@@ -589,19 +639,19 @@
       fftCtx.fillStyle = '#fff';
       fftCtx.strokeStyle = '#fff';
 
-      const pair = (dx, dy, r = 7) => {
-        fillCircle(fftCtx, cx + dx, cy + dy, r);
-        fillCircle(fftCtx, cx - dx, cy - dy, r);
+      const pair = (dx, dy) => {
+        fillPixel(fftCtx, cx + dx, cy + dy);
+        fillPixel(fftCtx, cx - dx, cy - dy);
       };
 
       if (kind === 'center') {
-        fillCircle(fftCtx, cx, cy, 9);
+        fillPixel(fftCtx, cx, cy);
       } else if (kind === 'pair-x') {
-        pair(26, 0, 7);
+        pair(26, 0);
       } else if (kind === 'pair-y') {
-        pair(0, 26, 7);
+        pair(0, 26);
       } else if (kind === 'diag-pair') {
-        pair(22, 22, 7);
+        pair(22, 22);
       } else if (kind === 'ring') {
         fftCtx.lineWidth = 4;
         fftCtx.beginPath();
@@ -645,8 +695,33 @@
     clearCanvas(realCtx, realCanvas);
     clearCanvas(fftCtx, fftCanvas);
 
-    attachPainter(realCanvas, realCtx, realBrush, () => realLive.checked, scheduleRealToFFT);
-    attachPainter(fftCanvas, fftCtx, fftBrush, () => fftLive.checked, scheduleFFTToReal);
+    attachPainter(
+      realCanvas,
+      realCtx,
+      realBrush,
+      () => realLive.checked,
+      scheduleRealToFFT,
+      () => (realErasing ? '#000' : '#fff')
+    );
+    attachPainter(
+      fftCanvas,
+      fftCtx,
+      fftBrush,
+      () => fftLive.checked,
+      scheduleFFTToReal,
+      () => (fftErasing ? '#000' : '#fff')
+    );
+
+    setEraserButtonState(realEraser, realErasing);
+    setEraserButtonState(fftEraser, fftErasing);
+    realEraser.addEventListener('click', () => {
+      realErasing = !realErasing;
+      setEraserButtonState(realEraser, realErasing);
+    });
+    fftEraser.addEventListener('click', () => {
+      fftErasing = !fftErasing;
+      setEraserButtonState(fftEraser, fftErasing);
+    });
 
     realClear.addEventListener('click', () => {
       clearCanvas(realCtx, realCanvas);
