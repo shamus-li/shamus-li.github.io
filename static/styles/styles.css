@@ -1,6 +1,11 @@
-html, 
-body {
+:root {
+    background-color: #000;
     background-image: linear-gradient(180deg, #000 0%, #02041A 56.25%);
+    background-attachment: fixed;
+}
+
+html,
+body {
     letter-spacing: -0.01em;
     font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Helvetica", "Arial", sans-serif;
 
@@ -18,7 +23,9 @@ html {
 }
 
 body {
+    background: transparent;
     height: 100%;
+    margin: 0;
     overflow: auto;
 }
 
