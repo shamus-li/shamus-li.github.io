@@ -1,0 +1,81 @@
+{
+  "source": "static/resources/shamus-picture.png",
+  "atlas": "shamus-light-atlas.png",
+  "cellWidth": 1134,
+  "cellHeight": 734,
+  "grid": [
+    3,
+    3
+  ],
+  "initialLight": {
+    "x": 0.62,
+    "y": 0.32
+  },
+  "runtime": "single-texture-webgl2-bilinear-light-atlas",
+  "cells": [
+    {
+      "name": "top-left",
+      "col": 0,
+      "row": 0,
+      "x": -1.0,
+      "y": 1.0
+    },
+    {
+      "name": "top",
+      "col": 1,
+      "row": 0,
+      "x": 0.0,
+      "y": 1.0
+    },
+    {
+      "name": "top-right",
+      "col": 2,
+      "row": 0,
+      "x": 1.0,
+      "y": 1.0
+    },
+    {
+      "name": "left",
+      "col": 0,
+      "row": 1,
+      "x": -1.0,
+      "y": 0.0
+    },
+    {
+      "name": "center",
+      "col": 1,
+      "row": 1,
+      "x": 0.0,
+      "y": 0.0
+    },
+    {
+      "name": "right",
+      "col": 2,
+      "row": 1,
+      "x": 1.0,
+      "y": 0.0
+    },
+    {
+      "name": "bottom-left",
+      "col": 0,
+      "row": 2,
+      "x": -1.0,
+      "y": -1.0
+    },
+    {
+      "name": "bottom",
+      "col": 1,
+      "row": 2,
+      "x": 0.0,
+      "y": -1.0
+    },
+    {
+      "name": "bottom-right",
+      "col": 2,
+      "row": 2,
+      "x": 1.0,
+      "y": -1.0
+    }
+  ],
+  "replacementNotes": "For neural relighting, generate these nine cells with a diffusion relighter such as IC-Light, SynthLight, or Holo-Relighting and repack them into this atlas."
+}

@@ -1,0 +1,25 @@
+{
+  "source": "static/resources/shamus-picture.png",
+  "width": 1134,
+  "height": 734,
+  "neutral": "shamus-neutral.png",
+  "normalMask": "shamus-normal-mask.png",
+  "detail": "shamus-detail.png",
+  "initialLight": {
+    "x": 0.62,
+    "y": 0.32
+  },
+  "sourceLight": {
+    "direction": [
+      0.62,
+      0.32,
+      0.716
+    ],
+    "ambient": 0.52,
+    "strength": 0.48,
+    "source": "manual-portrait-calibration-camera-right-high"
+  },
+  "version": "full-subject-distance-v2",
+  "runtime": "webgl2-neutral-normal-source-compensated-relight",
+  "method": "Use original portrait pixels as the neutral base and a calibrated source-light direction so WebGL compensation matches the baked camera-right portrait light."
+}

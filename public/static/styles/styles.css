@@ -72,7 +72,8 @@ body::before {
     z-index: 1;
 }
 
-.photo img {
+.photo img,
+.photo canvas {
     max-height: 80%;
     pointer-events: none;
     position: absolute;
@@ -83,6 +84,40 @@ body::before {
     transform: translateX(-50%);
     overflow: hidden;
     z-index: 2;
+}
+
+.photo canvas {
+    height: 80%;
+}
+
+.photo img.relight-fallback-hidden {
+    opacity: 0;
+}
+
+.relight-field {
+    position: fixed;
+    inset: 0;
+    z-index: 3;
+    touch-action: none;
+    pointer-events: none;
+}
+
+.relight-handle {
+    position: absolute;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid rgb(255 255 255 / 48%);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    cursor: grab;
+    pointer-events: auto;
+    background: radial-gradient(circle, rgb(255 255 255 / 92%), rgb(110 164 255 / 32%) 45%, rgb(110 164 255 / 0%) 72%);
+    box-shadow: 0 0 26px rgb(110 164 255 / 42%), inset 0 0 10px rgb(255 255 255 / 36%);
+}
+
+.relight-handle:active {
+    cursor: grabbing;
 }
 
 .container {
