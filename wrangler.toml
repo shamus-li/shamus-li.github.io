@@ -3,8 +3,6 @@ compatibility_date = "2026-05-14"
 pages_build_output_dir = "dist"
 
 [vars]
-ACCESS_TEAM_DOMAIN = "https://shamus-li.cloudflareaccess.com"
-ACCESS_AUD = "c2c84bbcfaf5107c48979f22f16934c9623e589c7b0430f4a10130e0ece95a8d"
 CLOUDFLARE_ACCOUNT_ID = "2f56e0cba9c55090b02f5948da4ff347"
 REDIRECT_HOSTNAME = "shamus.li"
 REDIRECT_LIST_NAME = "pages_to_custom_domain"

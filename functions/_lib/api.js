@@ -1,4 +1,3 @@
-import { requireAccess } from "./access.js";
 import { listRedirects, replaceRedirects } from "./store.js";
 
 export async function handleApi(context) {
@@ -11,8 +10,7 @@ export async function handleApi(context) {
 
 async function routeApi({ request, env }) {
   const url = new URL(request.url);
-  const path = url.pathname.replace(/^\/api\/redirects\/?/, "");
-  await requireAccess({ request, env });
+  const path = url.pathname.replace(/^\/redirects\/api\/?/, "");
 
   if (request.method === "GET" && path === "")
     return json(await listRedirects(env));

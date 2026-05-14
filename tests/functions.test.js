@@ -2,15 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { handleApi } from "../functions/_lib/api.js";
 import { listRedirects, replaceRedirects } from "../functions/_lib/store.js";
-import { onRequest as onRedirectsRequest } from "../functions/redirects/[[path]].js";
 
 const accountId = "account-id";
 const list = { id: "list-id", name: "pages_to_custom_domain", kind: "redirect" };
 
 function env(overrides = {}) {
   return {
-    ACCESS_TEAM_DOMAIN: "https://example.cloudflareaccess.com",
-    ACCESS_AUD: "test-audience",
     CLOUDFLARE_ACCOUNT_ID: accountId,
     CLOUDFLARE_API_TOKEN: "token",
     REDIRECT_HOSTNAME: "shamus.li",
@@ -161,7 +158,7 @@ describe("redirects API", () => {
       },
     ]);
 
-    const response = await handleApi(context("http://localhost/api/redirects"));
+    const response = await handleApi(context("http://localhost/redirects/api"));
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual([
@@ -182,7 +179,7 @@ describe("redirects API", () => {
     ];
 
     const response = await handleApi(
-      context("http://localhost/api/redirects", {
+      context("http://localhost/redirects/api", {
         method: "PUT",
         body: { redirects },
       }),
@@ -197,7 +194,7 @@ describe("redirects API", () => {
     const calls = mockCloudflare();
 
     const response = await handleApi(
-      context("http://localhost/api/redirects", {
+      context("http://localhost/redirects/api", {
         method: "PUT",
         body: {
           redirects: [
@@ -212,17 +209,5 @@ describe("redirects API", () => {
       error: "Redirect sources must start with /",
     });
     expect(calls).toHaveLength(0);
-  });
-});
-
-describe("Pages Functions routing", () => {
-  it("protects /redirects without handling public redirects", async () => {
-    const request = context("http://localhost/redirects");
-
-    const response = await onRedirectsRequest(request);
-
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe("next");
-    expect(request.next).toHaveBeenCalledOnce();
   });
 });

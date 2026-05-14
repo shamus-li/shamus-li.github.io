@@ -101,7 +101,7 @@ function App() {
   const redirectsRef = useRef<RedirectRule[]>([])
 
   function saveRedirects(nextRedirects: RedirectRule[]) {
-    fetchJson("/api/redirects", {
+    fetchJson("/redirects/api", {
       method: "PUT",
       body: JSON.stringify({ redirects: redirectsForSave(nextRedirects) }),
     }).catch((error: Error) => {
@@ -162,7 +162,7 @@ function App() {
 
     async function loadInitialData() {
       try {
-        const nextRedirects = await fetchJson<RedirectRule[]>("/api/redirects")
+        const nextRedirects = await fetchJson<RedirectRule[]>("/redirects/api")
         if (cancelled) return
         const collapsedRedirects = collapseRedirects(nextRedirects).map(
           (rule, index) => ({
@@ -219,7 +219,7 @@ function App() {
               <AlertTitle>Access did not pass through</AlertTitle>
               <AlertDescription>
                 {accessError ||
-                  "Protect /redirects and /api/redirects with a Cloudflare Access application."}
+                  "Protect /redirects* with a Cloudflare Access application."}
               </AlertDescription>
             </Alert>
           </CardContent>

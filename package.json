@@ -12,9 +12,6 @@
     "lint:redirects": "npm -w redirects run lint",
     "build:redirects": "npm -w redirects run build"
   },
-  "dependencies": {
-    "jose": "^6.2.3"
-  },
   "devDependencies": {
     "vitest": "^4.1.6"
   }

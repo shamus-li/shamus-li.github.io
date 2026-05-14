@@ -24,14 +24,14 @@ function mockApi(redirects: RedirectRule[], putStatus = 200) {
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString()
-      if (url === "/api/redirects" && init?.method === "PUT") {
+      if (url === "/redirects/api" && init?.method === "PUT") {
         const body = JSON.parse(String(init.body || "{}"))
         puts.push(body.redirects || [])
         return putStatus >= 400
           ? json({ error: "Redirect update failed" }, { status: putStatus })
           : json({ ok: true, redirects: body.redirects || [] })
       }
-      if (url === "/api/redirects") return json(redirects)
+      if (url === "/redirects/api") return json(redirects)
       return json({ error: "not found" }, { status: 404 })
     }),
   )
