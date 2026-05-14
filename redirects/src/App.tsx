@@ -151,24 +151,18 @@ function App() {
   const [code, setCode] = useState<"301" | "302">("301")
   const [accessError, setAccessError] = useState("")
   const redirectsRef = useRef<RedirectRule[]>([])
-  const saveQueue = useRef<Promise<void>>(Promise.resolve())
 
   const activeCount = redirects.filter((rule) => rule.active).length
   const pausedCount = redirects.length - activeCount
   const canSignOut = status?.authenticated && !status.user?.local
 
   function saveRedirects(nextRedirects: RedirectRule[]) {
-    saveQueue.current = saveQueue.current
-      .catch(() => undefined)
-      .then(() =>
-        fetchJson("/api/redirects", {
-          method: "PUT",
-          body: JSON.stringify({ redirects: redirectsForSave(nextRedirects) }),
-        }).then(() => undefined)
-      )
-      .catch((error: Error) => {
-        toast.error(error.message)
-      })
+    fetchJson("/api/redirects", {
+      method: "PUT",
+      body: JSON.stringify({ redirects: redirectsForSave(nextRedirects) }),
+    }).catch((error: Error) => {
+      toast.error(error.message)
+    })
   }
 
   function commitRedirects(nextRedirects: RedirectRule[]) {

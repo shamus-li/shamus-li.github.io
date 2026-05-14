@@ -16,6 +16,7 @@ type MockRedirectApi = {
   fetchMock: ReturnType<typeof vi.fn>
   lastPutRedirects: RedirectRule[] | null
   putRedirects: RedirectRule[][]
+  resolveNextPut: () => void
 }
 
 function jsonResponse(body: unknown, init: ResponseInit = {}) {
@@ -27,12 +28,14 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
 
 function mockRedirectApi(
   redirects: RedirectRule[],
-  options: { putStatus?: number; putBody?: unknown } = {}
+  options: { holdPuts?: boolean; putStatus?: number; putBody?: unknown } = {}
 ): MockRedirectApi {
+  const putResolvers: Array<() => void> = []
   const api: MockRedirectApi = {
     fetchMock: vi.fn(),
     lastPutRedirects: null,
     putRedirects: [],
+    resolveNextPut: () => putResolvers.shift()?.(),
   }
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -51,6 +54,9 @@ function mockRedirectApi(
       }
       api.lastPutRedirects = body.redirects || []
       api.putRedirects.push(api.lastPutRedirects)
+      if (options.holdPuts) {
+        await new Promise<void>((resolve) => putResolvers.push(resolve))
+      }
       if (options.putStatus && options.putStatus >= 400) {
         return jsonResponse(
           options.putBody || { error: "Save failed" },
@@ -188,6 +194,34 @@ describe("App", () => {
     await waitFor(() => expect(api.lastPutRedirects).toEqual([]))
     expect(screen.queryByText("Autosaving...")).toBeNull()
     expect(screen.queryByText("Saved")).toBeNull()
+  })
+
+  it("sends remove immediately even when the previous add save is still pending", async () => {
+    const user = userEvent.setup()
+    const api = mockRedirectApi([], { holdPuts: true })
+
+    render(<App />)
+
+    await screen.findByText("Rules")
+    await user.type(screen.getByLabelText("Source"), "temporary")
+    await user.type(
+      screen.getByLabelText("Destination"),
+      "https://example.com/temporary"
+    )
+    await user.click(screen.getByRole("button", { name: "Add" }))
+
+    await waitFor(() => expect(api.putRedirects).toHaveLength(1))
+    await user.click(screen.getByRole("button", { name: "Remove" }))
+
+    await waitFor(() => expect(api.putRedirects).toHaveLength(2))
+    expect(api.putRedirects[0].map((rule) => rule.source)).toEqual([
+      "/temporary",
+      "/temporary/",
+    ])
+    expect(api.putRedirects[1]).toEqual([])
+
+    api.resolveNextPut()
+    api.resolveNextPut()
   })
 
   it("saves every pause and resume change", async () => {
