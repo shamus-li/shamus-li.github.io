@@ -224,6 +224,37 @@ describe("App", () => {
     api.resolveNextPut()
   })
 
+  it("sends pause immediately even when the previous add save is still pending", async () => {
+    const user = userEvent.setup()
+    const api = mockRedirectApi([], { holdPuts: true })
+
+    render(<App />)
+
+    await screen.findByText("Rules")
+    await user.type(screen.getByLabelText("Source"), "pausable")
+    await user.type(
+      screen.getByLabelText("Destination"),
+      "https://example.com/pausable"
+    )
+    await user.click(screen.getByRole("button", { name: "Add" }))
+
+    await waitFor(() => expect(api.putRedirects).toHaveLength(1))
+    await user.click(screen.getByRole("button", { name: "Pause" }))
+
+    await waitFor(() => expect(api.putRedirects).toHaveLength(2))
+    expect(api.putRedirects[0].map((rule) => rule.active)).toEqual([
+      true,
+      true,
+    ])
+    expect(api.putRedirects[1].map((rule) => rule.active)).toEqual([
+      false,
+      false,
+    ])
+
+    api.resolveNextPut()
+    api.resolveNextPut()
+  })
+
   it("saves every pause and resume change", async () => {
     const user = userEvent.setup()
     const api = mockRedirectApi([
