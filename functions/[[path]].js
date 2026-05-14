@@ -20,8 +20,18 @@ export async function onRequest(context) {
 
   if (request.method === "GET" || request.method === "HEAD") {
     const rule = await findRedirect(context.env, url.pathname);
-    if (rule) return Response.redirect(rule.destination, rule.code);
+    if (rule) return redirectResponse(rule);
   }
 
   return context.next();
+}
+
+function redirectResponse(rule) {
+  return new Response(null, {
+    status: rule.code,
+    headers: {
+      location: rule.destination,
+      "cache-control": "no-store",
+    },
+  });
 }

@@ -148,7 +148,7 @@ function App() {
   const [redirects, setRedirects] = useState<RedirectRule[]>([])
   const [source, setSource] = useState("")
   const [destination, setDestination] = useState("")
-  const [code, setCode] = useState<"301" | "302">("301")
+  const [code, setCode] = useState<"301" | "302">("302")
   const [accessError, setAccessError] = useState("")
   const redirectsRef = useRef<RedirectRule[]>([])
 
@@ -204,7 +204,7 @@ function App() {
     commitRedirects(nextRedirects)
     setSource("")
     setDestination("")
-    setCode("301")
+    setCode("302")
   }
 
   function updateRule(id: string | undefined, patch: Partial<RedirectRule>) {

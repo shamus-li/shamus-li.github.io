@@ -220,8 +220,10 @@ describe("Pages redirect function", () => {
 
     expect(getResponse.status).toBe(301);
     expect(getResponse.headers.get("location")).toBe("https://example.com/go");
+    expect(getResponse.headers.get("cache-control")).toBe("no-store");
     expect(headResponse.status).toBe(301);
     expect(headResponse.headers.get("location")).toBe("https://example.com/go");
+    expect(headResponse.headers.get("cache-control")).toBe("no-store");
   });
 
   it("falls through when no active redirect matches", async () => {

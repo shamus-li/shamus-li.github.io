@@ -160,6 +160,7 @@ describe("App", () => {
         "/papers/",
       ])
     )
+    expect(api.lastPutRedirects?.map((rule) => rule.code)).toEqual([302, 302])
     expect(screen.queryByText("Autosaving...")).toBeNull()
     expect(screen.queryByText("Saved")).toBeNull()
   })
