@@ -1,6 +1,5 @@
 import { requireAccess } from "./access.js";
-import { error, json, readJson } from "./http.js";
-import { getRedirects, saveRedirects } from "./store.js";
+import { listRedirects, replaceRedirects } from "./store.js";
 
 export async function handleApi(context) {
   try {
@@ -13,23 +12,15 @@ export async function handleApi(context) {
 async function routeApi({ request, env }) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/^\/api\/redirects\/?/, "");
-  const user = await requireAccess({ request, env });
-
-  if (request.method === "GET" && path === "status") {
-    return json({
-      authenticated: true,
-      user,
-    });
-  }
+  await requireAccess({ request, env });
 
   if (request.method === "GET" && path === "")
-    return json(await getRedirects(env));
+    return json(await listRedirects(env));
 
   if (request.method === "PUT" && path === "") {
     const body = await readJson(request);
     const redirects = validateRedirects(body.redirects);
-    await saveRedirects(env, redirects);
-    return json({ ok: true, redirects });
+    return json({ ok: true, redirects: await replaceRedirects(env, redirects) });
   }
 
   return error("Not found", 404);
@@ -48,7 +39,7 @@ function validateRedirects(redirects) {
       throw validationError("Redirect destinations must be absolute URLs");
     if (![301, 302].includes(code))
       throw validationError("Redirect code must be 301 or 302");
-    return { source, destination, code, active: Boolean(rule.active) };
+    return { source, destination, code };
   });
 }
 
@@ -56,4 +47,27 @@ function validationError(message) {
   const err = new Error(message);
   err.status = 400;
   return err;
+}
+
+function json(data, init = {}) {
+  return new Response(JSON.stringify(data), {
+    ...init,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      ...(init.headers || {}),
+    },
+  });
+}
+
+function error(message, status = 400) {
+  return json({ error: message }, { status });
+}
+
+async function readJson(request) {
+  try {
+    return await request.json();
+  } catch {
+    return {};
+  }
 }

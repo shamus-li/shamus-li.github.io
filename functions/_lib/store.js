@@ -1,77 +1,128 @@
-export const DEFAULT_REDIRECTS = [
-  {
-    source: "/4660-feedback",
-    destination: "https://forms.gle/hM4a3iq7VX1szfd86",
-    code: 301,
-    active: true,
-  },
-  {
-    source: "/4660-feedback/",
-    destination: "https://forms.gle/hM4a3iq7VX1szfd86",
-    code: 301,
-    active: true,
-  },
-  {
-    source: "/snack-rotation",
-    destination:
-      "https://docs.google.com/spreadsheets/d/1PLLapvCIgzZI-GHkF203iDKOuoID04lpvxVHUaqsl6E/edit?usp=sharing",
-    code: 301,
-    active: true,
-  },
-  {
-    source: "/snack-rotation/",
-    destination:
-      "https://docs.google.com/spreadsheets/d/1PLLapvCIgzZI-GHkF203iDKOuoID04lpvxVHUaqsl6E/edit?usp=sharing",
-    code: 301,
-    active: true,
-  },
-  {
-    source: "/words-of-wisdom",
-    destination:
-      "https://docs.google.com/document/d/1N5CbBP5Uez4s_DDrd-rBFKBBNVewKc0oDI8FeW7Kjzo/edit?usp=sharing",
-    code: 301,
-    active: true,
-  },
-  {
-    source: "/words-of-wisdom/",
-    destination:
-      "https://docs.google.com/document/d/1N5CbBP5Uez4s_DDrd-rBFKBBNVewKc0oDI8FeW7Kjzo/edit?usp=sharing",
-    code: 301,
-    active: true,
-  },
-];
+const API_BASE = "https://api.cloudflare.com/client/v4";
+const DEFAULT_LIST_NAME = "pages_to_custom_domain";
 
-const REDIRECTS_KEY = "redirects";
+export async function listRedirects(env) {
+  const config = await configFor(env);
+  const items = [];
+  let cursor = "";
 
-function kv(env) {
-  if (!env.REDIRECTS_KV) throw new Error("Missing REDIRECTS_KV binding");
-  return env.REDIRECTS_KV;
-}
-
-export async function getJson(env, key) {
-  return kv(env).get(key, "json");
-}
-
-export async function putJson(env, key, value, options) {
-  return kv(env).put(key, JSON.stringify(value), options);
-}
-
-export async function getRedirects(env) {
-  const stored = await getJson(env, REDIRECTS_KEY);
-  if (stored) return stored;
-  await putJson(env, REDIRECTS_KEY, DEFAULT_REDIRECTS);
-  return DEFAULT_REDIRECTS;
-}
-
-export async function saveRedirects(env, redirects) {
-  return putJson(env, REDIRECTS_KEY, redirects);
-}
-
-export async function findRedirect(env, pathname) {
-  if (!env.REDIRECTS_KV)
-    return DEFAULT_REDIRECTS.find(
-      (rule) => rule.active && rule.source === pathname,
+  do {
+    const query = new URLSearchParams({ per_page: "500" });
+    if (cursor) query.set("cursor", cursor);
+    const page = await cf(
+      config,
+      "GET",
+      `/rules/lists/${config.list.id}/items?${query}`,
+      true,
     );
-  const redirects = await getRedirects(env);
-  return redirects.find((rule) => rule.active && rule.source === pathname);
+    items.push(...page.result);
+    cursor = page.result_info?.cursors?.after || "";
+  } while (cursor);
+
+  return items.map((item) => ({
+    id: item.id,
+    source: pathFromSourceUrl(item.redirect.source_url, config.hostname),
+    destination: item.redirect.target_url,
+    code: item.redirect.status_code || 301,
+  }));
+}
+
+export async function replaceRedirects(env, redirects) {
+  const config = await configFor(env);
+  const operation = await cf(
+    config,
+    "PUT",
+    `/rules/lists/${config.list.id}/items`,
+    redirects.map((rule) => ({
+      redirect: {
+        source_url: `${config.hostname}${normalizePath(rule.source)}`,
+        target_url: rule.destination,
+        status_code: rule.code,
+        preserve_query_string: false,
+        preserve_path_suffix: false,
+        subpath_matching: false,
+        include_subdomains: false,
+      },
+    })),
+  );
+
+  await waitForOperation(config, operation.operation_id);
+  return redirects;
+}
+
+async function configFor(env) {
+  const config = {
+    accountId: required(env.CLOUDFLARE_ACCOUNT_ID, "CLOUDFLARE_ACCOUNT_ID"),
+    token: required(env.CLOUDFLARE_API_TOKEN, "CLOUDFLARE_API_TOKEN"),
+    hostname: required(env.REDIRECT_HOSTNAME, "REDIRECT_HOSTNAME")
+      .replace(/^https?:\/\//, "")
+      .replace(/\/+$/, ""),
+    listName: env.REDIRECT_LIST_NAME || DEFAULT_LIST_NAME,
+  };
+  const lists = await cf(config, "GET", "/rules/lists");
+  const list = lists.find((entry) => entry.kind === "redirect" && entry.name === config.listName);
+  if (!list) throw requestError(`Cloudflare Bulk Redirect List "${config.listName}" was not found`, 500);
+  return { ...config, list };
+}
+
+async function waitForOperation(config, operationId) {
+  if (!operationId) return;
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const operation = await cf(config, "GET", `/rules/lists/bulk_operations/${operationId}`);
+    if (operation.status === "completed") return;
+    if (operation.status === "failed") {
+      throw requestError(operation.error || "Cloudflare redirect update failed", 502);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  throw requestError("Cloudflare redirect update did not finish in time", 504);
+}
+
+async function cf(config, method, path, envelope = false) {
+  const body = Array.isArray(envelope) ? envelope : undefined;
+  const response = await fetch(`${API_BASE}/accounts/${config.accountId}${path}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${config.token}`,
+      ...(body ? { "content-type": "application/json" } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok || data.success === false) {
+    throw requestError(
+      data.errors?.map((error) => error.message).join("; ") ||
+        `${response.status} ${response.statusText}`,
+      response.status,
+    );
+  }
+
+  return envelope === true ? data : data.result;
+}
+
+function pathFromSourceUrl(sourceUrl, hostname) {
+  const withoutScheme = sourceUrl.replace(/^https?:\/\//, "");
+  if (withoutScheme === hostname) return "/";
+  return withoutScheme.startsWith(`${hostname}/`)
+    ? `/${withoutScheme.slice(hostname.length + 1)}`
+    : `/${withoutScheme.replace(/^\/+/, "")}`;
+}
+
+function normalizePath(source) {
+  const trimmed = String(source || "").trim();
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
+function required(value, name) {
+  if (!value) throw requestError(`${name} is not configured`, 500);
+  return value;
+}
+
+function requestError(message, status) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
 }

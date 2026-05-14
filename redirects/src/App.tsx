@@ -2,8 +2,6 @@ import { useEffect, useRef, useState } from "react"
 import {
   ExternalLinkIcon,
   LogOutIcon,
-  PauseIcon,
-  PlayIcon,
   PlusIcon,
   ShieldCheckIcon,
   Trash2Icon,
@@ -37,19 +35,6 @@ type RedirectRule = {
   source: string
   destination: string
   code: 301 | 302
-  active: boolean
-  includeTrailingSlashVariant?: boolean
-}
-
-type AccessUser = {
-  email?: string
-  name?: string
-  local?: boolean
-}
-
-type Status = {
-  authenticated: boolean
-  user?: AccessUser
 }
 
 type LoadState = "loading" | "ready" | "blocked"
@@ -81,60 +66,24 @@ function sourceVariants(source: string) {
   return canonical === "/" ? [canonical] : [canonical, `${canonical}/`]
 }
 
-function sameRedirectTarget(left: RedirectRule, right: RedirectRule) {
-  return (
-    left.destination === right.destination &&
-    left.code === right.code &&
-    left.active === right.active
-  )
-}
-
 function collapseRedirects(rules: RedirectRule[]) {
-  const groups = new Map<string, RedirectRule[]>()
-
+  const bySource = new Map<string, RedirectRule>()
   for (const rule of rules) {
-    const canonical = canonicalSource(rule.source)
-    groups.set(canonical, [...(groups.get(canonical) || []), rule])
+    bySource.set(canonicalSource(rule.source), rule)
   }
 
-  return Array.from(groups.entries()).flatMap(([source, group]) => {
-    const canonicalRule =
-      group.find((rule) => canonicalSource(rule.source) === rule.source) ||
-      group[0]
-
-    if (group.every((rule) => sameRedirectTarget(rule, canonicalRule))) {
-      return [
-        {
-          ...canonicalRule,
-          source,
-          includeTrailingSlashVariant: true,
-        },
-      ]
-    }
-
-    return group.map((rule) => ({
-      ...rule,
-      source: normalizeSource(rule.source),
-      includeTrailingSlashVariant: false,
-    }))
-  })
+  return Array.from(bySource, ([source, rule]) => ({ ...rule, source }))
 }
 
 function redirectsForSave(rules: RedirectRule[]) {
   const redirects = new Map<string, RedirectRule>()
 
   for (const rule of rules) {
-    const sources =
-      rule.includeTrailingSlashVariant === false
-        ? [normalizeSource(rule.source)]
-        : sourceVariants(rule.source)
-
-    for (const source of sources) {
+    for (const source of sourceVariants(rule.source)) {
       redirects.set(source, {
         source,
         destination: rule.destination,
         code: rule.code,
-        active: rule.active,
       })
     }
   }
@@ -143,7 +92,6 @@ function redirectsForSave(rules: RedirectRule[]) {
 }
 
 function App() {
-  const [status, setStatus] = useState<Status | null>(null)
   const [loadState, setLoadState] = useState<LoadState>("loading")
   const [redirects, setRedirects] = useState<RedirectRule[]>([])
   const [source, setSource] = useState("")
@@ -151,10 +99,6 @@ function App() {
   const [code, setCode] = useState<"301" | "302">("301")
   const [accessError, setAccessError] = useState("")
   const redirectsRef = useRef<RedirectRule[]>([])
-
-  const activeCount = redirects.filter((rule) => rule.active).length
-  const pausedCount = redirects.length - activeCount
-  const canSignOut = status?.authenticated && !status.user?.local
 
   function saveRedirects(nextRedirects: RedirectRule[]) {
     fetchJson("/api/redirects", {
@@ -186,8 +130,6 @@ function App() {
       source: nextSource,
       destination: nextDestination,
       code: Number(code) as 301 | 302,
-      active: true,
-      includeTrailingSlashVariant: true,
     }
 
     const currentRedirects = redirectsRef.current
@@ -207,14 +149,6 @@ function App() {
     setCode("301")
   }
 
-  function updateRule(id: string | undefined, patch: Partial<RedirectRule>) {
-    commitRedirects(
-      redirectsRef.current.map((rule) =>
-        rule.id === id ? { ...rule, ...patch } : rule
-      )
-    )
-  }
-
   function removeRule(id: string | undefined) {
     commitRedirects(redirectsRef.current.filter((rule) => rule.id !== id))
   }
@@ -228,7 +162,6 @@ function App() {
 
     async function loadInitialData() {
       try {
-        const nextStatus = await fetchJson<Status>("/api/redirects/status")
         const nextRedirects = await fetchJson<RedirectRule[]>("/api/redirects")
         if (cancelled) return
         const collapsedRedirects = collapseRedirects(nextRedirects).map(
@@ -237,7 +170,6 @@ function App() {
             ...rule,
           })
         )
-        setStatus(nextStatus)
         redirectsRef.current = collapsedRedirects
         setRedirects(collapsedRedirects)
         setLoadState("ready")
@@ -304,21 +236,16 @@ function App() {
           <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <CardTitle className="text-4xl md:text-5xl">Redirects</CardTitle>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {redirects.length} total
+              </p>
             </div>
-            {canSignOut ? (
-              <Button variant="outline" onClick={logOut}>
-                <LogOutIcon data-icon="inline-start" />
-                Sign out
-              </Button>
-            ) : null}
+            <Button variant="outline" onClick={logOut}>
+              <LogOutIcon data-icon="inline-start" />
+              Sign out
+            </Button>
           </CardHeader>
         </Card>
-
-        <div className="grid gap-4 md:grid-cols-3">
-          <SummaryCard label="Active" value={activeCount} />
-          <SummaryCard label="Paused" value={pausedCount} />
-          <SummaryCard label="Total" value={redirects.length} />
-        </div>
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
           <Card className="min-w-0">
@@ -330,7 +257,6 @@ function App() {
                 <RedirectRow
                   key={rule.id}
                   rule={rule}
-                  onToggle={() => updateRule(rule.id, { active: !rule.active })}
                   onRemove={() => removeRule(rule.id)}
                 />
               ))}
@@ -395,24 +321,11 @@ function App() {
   )
 }
 
-function SummaryCard({ label, value }: { label: string; value: number }) {
-  return (
-    <Card>
-      <CardContent className="pt-6">
-        <div className="text-3xl font-semibold">{value}</div>
-        <div className="text-sm text-muted-foreground">{label}</div>
-      </CardContent>
-    </Card>
-  )
-}
-
 function RedirectRow({
   rule,
-  onToggle,
   onRemove,
 }: {
   rule: RedirectRule
-  onToggle: () => void
   onRemove: () => void
 }) {
   return (
@@ -427,18 +340,8 @@ function RedirectRow({
         <span className="truncate">{rule.destination}</span>
         <ExternalLinkIcon className="size-4 shrink-0" data-icon="inline-end" />
       </a>
-      <Badge variant={rule.active ? "secondary" : "outline"}>
-        {rule.active ? rule.code : "paused"}
-      </Badge>
+      <Badge variant="secondary">{rule.code}</Badge>
       <div className="flex gap-2">
-        <Button variant="outline" size="sm" onClick={onToggle}>
-          {rule.active ? (
-            <PauseIcon data-icon="inline-start" />
-          ) : (
-            <PlayIcon data-icon="inline-start" />
-          )}
-          {rule.active ? "Pause" : "Resume"}
-        </Button>
         <Button variant="outline" size="sm" onClick={onRemove}>
           <Trash2Icon data-icon="inline-start" />
           Remove

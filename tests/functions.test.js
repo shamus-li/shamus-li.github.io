@@ -1,263 +1,194 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { handleApi } from "../functions/_lib/api.js";
-import {
-  DEFAULT_REDIRECTS,
-  findRedirect,
-  getRedirects,
-  saveRedirects,
-} from "../functions/_lib/store.js";
-import { onRequest } from "../functions/[[path]].js";
+import { listRedirects, replaceRedirects } from "../functions/_lib/store.js";
+import { onRequest as onRedirectsRequest } from "../functions/redirects/[[path]].js";
 
-function createKv(initialEntries = {}) {
-  const values = new Map(Object.entries(initialEntries));
-  return {
-    get: vi.fn(async (key, type) => {
-      const value = values.get(key);
-      if (value === undefined) return null;
-      if (type === "json") return JSON.parse(value);
-      return value;
-    }),
-    put: vi.fn(async (key, value) => {
-      values.set(key, value);
-    }),
-    values,
-  };
-}
+const accountId = "account-id";
+const list = { id: "list-id", name: "pages_to_custom_domain", kind: "redirect" };
 
-function createEnv(kv = createKv()) {
+function env(overrides = {}) {
   return {
-    REDIRECTS_KV: kv,
     ACCESS_TEAM_DOMAIN: "https://example.cloudflareaccess.com",
     ACCESS_AUD: "test-audience",
+    CLOUDFLARE_ACCOUNT_ID: accountId,
+    CLOUDFLARE_API_TOKEN: "token",
+    REDIRECT_HOSTNAME: "shamus.li",
+    REDIRECT_LIST_NAME: list.name,
+    ...overrides,
   };
 }
 
-function createContext(url, { env = createEnv(), method = "GET", body } = {}) {
+function context(url, { body, method = "GET", env: nextEnv = env() } = {}) {
   return {
+    env: nextEnv,
+    next: vi.fn(async () => new Response("next")),
     request: new Request(url, {
       method,
       body: body === undefined ? undefined : JSON.stringify(body),
       headers: body === undefined ? undefined : { "content-type": "application/json" },
     }),
-    env,
-    next: vi.fn(async () => new Response("next", { status: 200 })),
   };
 }
 
-async function readJson(response) {
-  return response.json();
+function mockCloudflare(items = []) {
+  const calls = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input, init = {}) => {
+      const url = new URL(String(input));
+      const body = init.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ method: init.method || "GET", path: url.pathname, body });
+
+      if (url.pathname.endsWith("/rules/lists")) return cf([list]);
+      if (url.pathname.endsWith(`/rules/lists/${list.id}/items`)) {
+        if (init.method === "PUT") return cf({ operation_id: "operation-id" });
+        return cf(items, { result_info: { cursors: {} } });
+      }
+      if (url.pathname.endsWith("/rules/lists/bulk_operations/operation-id")) {
+        return cf({ status: "completed" });
+      }
+      return cfError(`${init.method || "GET"} ${url.pathname} not mocked`, 404);
+    }),
+  );
+  return calls;
 }
 
+function cf(result, extra = {}) {
+  return json({ success: true, errors: [], messages: [], result, ...extra });
+}
+
+function cfError(message, status) {
+  return json({ success: false, errors: [{ message }], messages: [] }, status);
+}
+
+function json(body, status = 200) {
+  const init = typeof status === "number" ? { status } : status;
+  return new Response(JSON.stringify(body), {
+    ...init,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
 describe("redirect store", () => {
-  it("seeds KV with default redirects on first read", async () => {
-    const kv = createKv();
-    const env = createEnv(kv);
+  it("reads redirects from the configured Cloudflare Bulk Redirect List", async () => {
+    mockCloudflare([
+      {
+        id: "item-id",
+        redirect: {
+          source_url: "shamus.li/papers",
+          target_url: "https://example.com/papers",
+          status_code: 301,
+        },
+      },
+    ]);
 
-    const redirects = await getRedirects(env);
-
-    expect(redirects).toEqual(DEFAULT_REDIRECTS);
-    expect(kv.get).toHaveBeenCalledWith("redirects", "json");
-    expect(kv.put).toHaveBeenCalledWith(
-      "redirects",
-      JSON.stringify(DEFAULT_REDIRECTS),
-      undefined,
-    );
+    await expect(listRedirects(env())).resolves.toEqual([
+      {
+        id: "item-id",
+        source: "/papers",
+        destination: "https://example.com/papers",
+        code: 301,
+      },
+    ]);
   });
 
-  it("reads saved redirects from KV instead of defaults", async () => {
-    const saved = [
+  it("replaces the configured Cloudflare Bulk Redirect List", async () => {
+    const calls = mockCloudflare();
+
+    await replaceRedirects(env(), [
+      { source: "/papers", destination: "https://example.com/papers", code: 301 },
+    ]);
+
+    expect(calls.find((call) => call.method === "PUT")?.body).toEqual([
       {
-        source: "/saved",
-        destination: "https://example.com/saved",
-        code: 302,
-        active: true,
+        redirect: expect.objectContaining({
+          source_url: "shamus.li/papers",
+          target_url: "https://example.com/papers",
+          status_code: 301,
+        }),
       },
-    ];
-    const kv = createKv({ redirects: JSON.stringify(saved) });
-
-    await expect(getRedirects(createEnv(kv))).resolves.toEqual(saved);
-    expect(kv.put).not.toHaveBeenCalled();
-  });
-
-  it("saves redirects to KV and resolves active matches only", async () => {
-    const kv = createKv();
-    const env = createEnv(kv);
-    const redirects = [
-      {
-        source: "/active",
-        destination: "https://example.com/active",
-        code: 301,
-        active: true,
-      },
-      {
-        source: "/paused",
-        destination: "https://example.com/paused",
-        code: 301,
-        active: false,
-      },
-    ];
-
-    await saveRedirects(env, redirects);
-
-    await expect(findRedirect(env, "/active")).resolves.toEqual(redirects[0]);
-    await expect(findRedirect(env, "/paused")).resolves.toBeUndefined();
+    ]);
   });
 });
 
 describe("redirects API", () => {
-  it("returns Access status for local preview requests", async () => {
-    const response = await handleApi(createContext("http://localhost/api/redirects/status"));
-
-    await expect(readJson(response)).resolves.toMatchObject({
-      authenticated: true,
-      user: { local: true },
-    });
-  });
-
-  it("lists redirects from KV", async () => {
-    const redirects = [
+  it("lists redirects", async () => {
+    mockCloudflare([
       {
+        id: "api-item",
+        redirect: {
+          source_url: "shamus.li/api-test",
+          target_url: "https://example.com/api-test",
+          status_code: 301,
+        },
+      },
+    ]);
+
+    const response = await handleApi(context("http://localhost/api/redirects"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual([
+      {
+        id: "api-item",
         source: "/api-test",
         destination: "https://example.com/api-test",
         code: 301,
-        active: true,
       },
-    ];
-    const env = createEnv(createKv({ redirects: JSON.stringify(redirects) }));
-
-    const response = await handleApi(
-      createContext("http://localhost/api/redirects", { env }),
-    );
-
-    expect(response.status).toBe(200);
-    await expect(readJson(response)).resolves.toEqual(redirects);
+    ]);
   });
 
-  it("validates and saves redirect updates", async () => {
-    const kv = createKv();
+  it("validates and saves redirects", async () => {
+    const calls = mockCloudflare();
     const redirects = [
-      {
-        source: "/new",
-        destination: "https://example.com/new",
-        code: 302,
-        active: true,
-      },
-      {
-        source: "/new/",
-        destination: "https://example.com/new",
-        code: 302,
-        active: true,
-      },
+      { source: "/new", destination: "https://example.com/new", code: 301 },
+      { source: "/new/", destination: "https://example.com/new", code: 301 },
     ];
 
     const response = await handleApi(
-      createContext("http://localhost/api/redirects", {
-        env: createEnv(kv),
+      context("http://localhost/api/redirects", {
         method: "PUT",
         body: { redirects },
       }),
     );
 
     expect(response.status).toBe(200);
-    await expect(readJson(response)).resolves.toEqual({ ok: true, redirects });
-    expect(JSON.parse(kv.values.get("redirects"))).toEqual(redirects);
+    await expect(response.json()).resolves.toEqual({ ok: true, redirects });
+    expect(calls.find((call) => call.method === "PUT")?.body).toHaveLength(2);
   });
 
-  it("rejects invalid redirect updates before writing KV", async () => {
-    const kv = createKv();
+  it("rejects invalid redirects before calling Cloudflare", async () => {
+    const calls = mockCloudflare();
 
     const response = await handleApi(
-      createContext("http://localhost/api/redirects", {
-        env: createEnv(kv),
+      context("http://localhost/api/redirects", {
         method: "PUT",
         body: {
           redirects: [
-            {
-              source: "missing-leading-slash",
-              destination: "https://example.com",
-              code: 301,
-              active: true,
-            },
+            { source: "missing-leading-slash", destination: "https://example.com", code: 301 },
           ],
         },
       }),
     );
 
     expect(response.status).toBe(400);
-    await expect(readJson(response)).resolves.toEqual({
+    await expect(response.json()).resolves.toEqual({
       error: "Redirect sources must start with /",
     });
-    expect(kv.put).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
   });
 });
 
-describe("Pages redirect function", () => {
-  it("redirects active GET and HEAD requests from KV", async () => {
-    const env = createEnv(
-      createKv({
-        redirects: JSON.stringify([
-          {
-            source: "/go",
-            destination: "https://example.com/go",
-            code: 301,
-            active: true,
-          },
-          {
-            source: "/go/",
-            destination: "https://example.com/go",
-            code: 301,
-            active: true,
-          },
-        ]),
-      }),
-    );
+describe("Pages Functions routing", () => {
+  it("protects /redirects without handling public redirects", async () => {
+    const request = context("http://localhost/redirects");
 
-    const getResponse = await onRequest(createContext("http://localhost/go", { env }));
-    const headResponse = await onRequest(
-      createContext("http://localhost/go/", { env, method: "HEAD" }),
-    );
-
-    expect(getResponse.status).toBe(301);
-    expect(getResponse.headers.get("location")).toBe("https://example.com/go");
-    expect(getResponse.headers.get("cache-control")).toBe("no-store");
-    expect(headResponse.status).toBe(301);
-    expect(headResponse.headers.get("location")).toBe("https://example.com/go");
-    expect(headResponse.headers.get("cache-control")).toBe("no-store");
-  });
-
-  it("falls through when no active redirect matches", async () => {
-    const context = createContext("http://localhost/missing", {
-      env: createEnv(
-        createKv({
-          redirects: JSON.stringify([
-            {
-              source: "/paused",
-              destination: "https://example.com/paused",
-              code: 301,
-              active: false,
-            },
-          ]),
-        }),
-      ),
-    });
-
-    const response = await onRequest(context);
+    const response = await onRedirectsRequest(request);
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("next");
-    expect(context.next).toHaveBeenCalledOnce();
-  });
-
-  it("uses default redirects when the KV binding is unavailable", async () => {
-    const response = await onRequest({
-      ...createContext("http://localhost/4660-feedback"),
-      env: {},
-    });
-
-    expect(response.status).toBe(301);
-    expect(response.headers.get("location")).toBe(
-      "https://forms.gle/hM4a3iq7VX1szfd86",
-    );
+    expect(request.next).toHaveBeenCalledOnce();
   });
 });
