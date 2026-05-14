@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Page not found - Shamus Li</title>
+        <meta http-equiv="refresh" content="0; url=/">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="stylesheet" href="/static/styles/styles.css" />
+        <link rel="icon" type="image/x-icon" href="/static/resources/favicon.png">
+        <script>
+            window.location.replace('/');
+        </script>
+        <style>
+            .not-found {
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 18px;
+                color: #fff;
+                text-align: center;
+                position: relative;
+                z-index: 1;
+            }
+
+            .not-found h1 {
+                margin: 0;
+                font-size: min(72px, 12vw);
+                line-height: 1;
+            }
+
+            .not-found a {
+                color: #c7c7c7;
+                padding: 0;
+            }
+
+            .not-found a:hover {
+                color: rgb(180, 180, 180);
+            }
+        </style>
+    </head>
+    <body>
+        <main class="not-found">
+            <h1>Redirecting</h1>
+            <a href="/">Go home</a>
+        </main>
+    </body>
+</html>
