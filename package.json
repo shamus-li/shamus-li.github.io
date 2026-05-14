@@ -1,10 +1,21 @@
 {
   "private": true,
   "type": "module",
+  "workspaces": [
+    "redirects"
+  ],
   "scripts": {
-    "build": "npm --prefix redirects ci && npm --prefix redirects run build"
+    "build": "npm test && npm run lint:redirects && npm run build:redirects",
+    "test": "npm run test:functions && npm run test:redirects",
+    "test:functions": "vitest run",
+    "test:redirects": "npm -w redirects test",
+    "lint:redirects": "npm -w redirects run lint",
+    "build:redirects": "npm -w redirects run build"
   },
   "dependencies": {
     "jose": "^6.2.3"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.6"
   }
 }

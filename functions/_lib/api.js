@@ -36,17 +36,24 @@ async function routeApi({ request, env }) {
 }
 
 function validateRedirects(redirects) {
-  if (!Array.isArray(redirects)) throw new Error("Redirects must be an array");
+  if (!Array.isArray(redirects))
+    throw validationError("Redirects must be an array");
   return redirects.map((rule) => {
     const source = String(rule.source || "").trim();
     const destination = String(rule.destination || "").trim();
     const code = Number(rule.code);
     if (!source.startsWith("/"))
-      throw new Error("Redirect sources must start with /");
+      throw validationError("Redirect sources must start with /");
     if (!/^https?:\/\//.test(destination))
-      throw new Error("Redirect destinations must be absolute URLs");
+      throw validationError("Redirect destinations must be absolute URLs");
     if (![301, 302].includes(code))
-      throw new Error("Redirect code must be 301 or 302");
+      throw validationError("Redirect code must be 301 or 302");
     return { source, destination, code, active: Boolean(rule.active) };
   });
+}
+
+function validationError(message) {
+  const err = new Error(message);
+  err.status = 400;
+  return err;
 }
