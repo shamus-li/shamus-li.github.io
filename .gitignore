@@ -1,2 +1,4 @@
 .wrangler/
 .playwright-cli/
+dist/
+node_modules/

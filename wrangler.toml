@@ -1,0 +1,10 @@
+compatibility_date = "2026-05-14"
+pages_build_output_dir = "dist"
+
+[vars]
+ACCESS_TEAM_DOMAIN = "https://shamus-li.cloudflareaccess.com"
+ACCESS_AUD = "c2c84bbcfaf5107c48979f22f16934c9623e589c7b0430f4a10130e0ece95a8d"
+
+[[kv_namespaces]]
+binding = "REDIRECTS_KV"
+id = "64390cb7370541e7b9032f969c2aab68"

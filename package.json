@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm --prefix redirects ci && npm --prefix redirects run build"
+  },
+  "dependencies": {
+    "jose": "^6.2.3"
+  }
+}
