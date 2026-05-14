@@ -3,6 +3,34 @@ const DEFAULT_LIST_NAME = "pages_to_custom_domain";
 
 export async function listRedirects(env) {
   const config = await configFor(env);
+  const items = await readListItems(config);
+
+  return items.filter((item) => isManagedItem(item, config.hostname)).map((item) => ({
+    id: item.id,
+    source: pathFromSourceUrl(item.redirect.source_url, config.hostname),
+    destination: item.redirect.target_url,
+    code: item.redirect.status_code || 301,
+  }));
+}
+
+export async function replaceRedirects(env, redirects) {
+  const config = await configFor(env);
+  const existingItems = await readListItems(config);
+  const unmanagedItems = existingItems.filter(
+    (item) => !isManagedItem(item, config.hostname),
+  );
+  const operation = await cf(
+    config,
+    "PUT",
+    `/rules/lists/${config.list.id}/items`,
+    [...unmanagedItems.map(itemForWrite), ...redirects.map((rule) => itemFromRule(rule, config))],
+  );
+
+  await waitForOperation(config, operation.operation_id);
+  return redirects;
+}
+
+async function readListItems(config) {
   const items = [];
   let cursor = "";
 
@@ -19,35 +47,7 @@ export async function listRedirects(env) {
     cursor = page.result_info?.cursors?.after || "";
   } while (cursor);
 
-  return items.map((item) => ({
-    id: item.id,
-    source: pathFromSourceUrl(item.redirect.source_url, config.hostname),
-    destination: item.redirect.target_url,
-    code: item.redirect.status_code || 301,
-  }));
-}
-
-export async function replaceRedirects(env, redirects) {
-  const config = await configFor(env);
-  const operation = await cf(
-    config,
-    "PUT",
-    `/rules/lists/${config.list.id}/items`,
-    redirects.map((rule) => ({
-      redirect: {
-        source_url: `${config.hostname}${normalizePath(rule.source)}`,
-        target_url: rule.destination,
-        status_code: rule.code,
-        preserve_query_string: false,
-        preserve_path_suffix: false,
-        subpath_matching: false,
-        include_subdomains: false,
-      },
-    })),
-  );
-
-  await waitForOperation(config, operation.operation_id);
-  return redirects;
+  return items;
 }
 
 async function configFor(env) {
@@ -109,6 +109,42 @@ function pathFromSourceUrl(sourceUrl, hostname) {
   return withoutScheme.startsWith(`${hostname}/`)
     ? `/${withoutScheme.slice(hostname.length + 1)}`
     : `/${withoutScheme.replace(/^\/+/, "")}`;
+}
+
+function isManagedItem(item, hostname) {
+  const sourceUrl = item.redirect?.source_url;
+  if (!sourceUrl) return false;
+  const withoutScheme = sourceUrl.replace(/^https?:\/\//, "");
+  return withoutScheme === hostname || withoutScheme.startsWith(`${hostname}/`);
+}
+
+function itemFromRule(rule, config) {
+  return {
+    redirect: {
+      source_url: `${config.hostname}${normalizePath(rule.source)}`,
+      target_url: rule.destination,
+      status_code: rule.code,
+      preserve_query_string: false,
+      preserve_path_suffix: false,
+      subpath_matching: false,
+      include_subdomains: false,
+    },
+  };
+}
+
+function itemForWrite(item) {
+  const redirect = item.redirect;
+  return {
+    redirect: {
+      source_url: redirect.source_url,
+      target_url: redirect.target_url,
+      status_code: redirect.status_code,
+      preserve_query_string: Boolean(redirect.preserve_query_string),
+      preserve_path_suffix: Boolean(redirect.preserve_path_suffix),
+      subpath_matching: Boolean(redirect.subpath_matching),
+      include_subdomains: Boolean(redirect.include_subdomains),
+    },
+  };
 }
 
 function normalizePath(source) {

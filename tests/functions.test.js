@@ -112,6 +112,40 @@ describe("redirect store", () => {
       },
     ]);
   });
+
+  it("preserves list items outside the configured hostname", async () => {
+    const calls = mockCloudflare([
+      {
+        id: "github-pages-item",
+        redirect: {
+          source_url: "shamus-li.github.io/phd-survey-2026",
+          target_url: "https://shamus.li/phd-survey-2026",
+          status_code: 301,
+          preserve_query_string: true,
+        },
+      },
+    ]);
+
+    await replaceRedirects(env(), [
+      { source: "/papers", destination: "https://example.com/papers", code: 301 },
+    ]);
+
+    expect(calls.find((call) => call.method === "PUT")?.body).toEqual([
+      {
+        redirect: expect.objectContaining({
+          source_url: "shamus-li.github.io/phd-survey-2026",
+          target_url: "https://shamus.li/phd-survey-2026",
+          preserve_query_string: true,
+        }),
+      },
+      {
+        redirect: expect.objectContaining({
+          source_url: "shamus.li/papers",
+          target_url: "https://example.com/papers",
+        }),
+      },
+    ]);
+  });
 });
 
 describe("redirects API", () => {
