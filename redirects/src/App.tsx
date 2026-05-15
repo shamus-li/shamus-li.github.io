@@ -6,7 +6,7 @@ import {
   ShieldCheckIcon,
   Trash2Icon,
 } from "lucide-react"
-import { toast } from "sonner"
+import { Toaster, toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -17,18 +17,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
-import { Toaster } from "@/components/ui/sonner"
 
 type RedirectRule = {
   id?: string
@@ -99,14 +89,21 @@ function App() {
   const [code, setCode] = useState<"301" | "302">("301")
   const [accessError, setAccessError] = useState("")
   const redirectsRef = useRef<RedirectRule[]>([])
+  const saveQueueRef = useRef(Promise.resolve())
 
   function saveRedirects(nextRedirects: RedirectRule[]) {
-    fetchJson("/redirects/api", {
-      method: "PUT",
-      body: JSON.stringify({ redirects: redirectsForSave(nextRedirects) }),
-    }).catch((error: Error) => {
-      toast.error(error.message)
-    })
+    const body = JSON.stringify({ redirects: redirectsForSave(nextRedirects) })
+    saveQueueRef.current = saveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        await fetchJson("/redirects/api", {
+          method: "PUT",
+          body,
+        })
+      })
+      .catch((error: Error) => {
+        toast.error(error.message)
+      })
   }
 
   function commitRedirects(nextRedirects: RedirectRule[]) {
@@ -269,45 +266,39 @@ function App() {
             </CardHeader>
             <CardContent className="flex flex-col gap-5">
               <form className="flex flex-col gap-4" onSubmit={addRedirect}>
-                <FieldGroup>
-                  <Field>
-                    <FieldLabel htmlFor="source">Source</FieldLabel>
+                <div className="flex flex-col gap-5">
+                  <label className="flex flex-col gap-2">
+                    <span className="text-sm font-medium">Source</span>
                     <Input
-                      id="source"
                       required
                       value={source}
                       onChange={(event) => setSource(event.target.value)}
                       placeholder="/new-link"
                     />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="destination">Destination</FieldLabel>
+                  </label>
+                  <label className="flex flex-col gap-2">
+                    <span className="text-sm font-medium">Destination</span>
                     <Input
-                      id="destination"
                       required
                       value={destination}
                       onChange={(event) => setDestination(event.target.value)}
                       placeholder="https://example.com"
                     />
-                  </Field>
-                  <Field>
-                    <FieldLabel>Code</FieldLabel>
-                    <Select
+                  </label>
+                  <label className="flex flex-col gap-2">
+                    <span className="text-sm font-medium">Code</span>
+                    <select
+                      className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                       value={code}
-                      onValueChange={(value) => setCode(value as "301" | "302")}
+                      onChange={(event) =>
+                        setCode(event.target.value as "301" | "302")
+                      }
                     >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="301">301 permanent</SelectItem>
-                          <SelectItem value="302">302 temporary</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                </FieldGroup>
+                      <option value="301">301 permanent</option>
+                      <option value="302">302 temporary</option>
+                    </select>
+                  </label>
+                </div>
                 <Button type="submit">
                   <PlusIcon data-icon="inline-start" />
                   Add

@@ -45,6 +45,14 @@ function mockApi(redirects: RedirectRule[], putStatus = 200, getStatus = 200) {
   return puts
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve
+  })
+  return { promise, resolve }
+}
+
 describe("App", () => {
   it("shows an access error when initial loading fails", async () => {
     mockApi([], 200, 403)
@@ -191,6 +199,42 @@ describe("App", () => {
 
     await waitFor(() => expect(puts).toHaveLength(2))
     expect(puts[1]).toEqual([])
+  })
+
+  it("serializes autosaves so later edits cannot be overwritten", async () => {
+    const user = userEvent.setup()
+    const firstPut = deferred<Response>()
+    const calls: RedirectRule[][] = []
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (input.toString() === "/redirects/api" && init?.method === "PUT") {
+          calls.push(JSON.parse(String(init.body || "{}")).redirects || [])
+          if (calls.length === 1) return firstPut.promise
+          return json({ ok: true, redirects: calls.at(-1) })
+        }
+        return json([])
+      }),
+    )
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(
+      "00000000-0000-4000-8000-000000000000",
+    )
+
+    render(<App />)
+    await screen.findByText("Rules")
+    await user.type(screen.getByLabelText("Source"), "temporary")
+    await user.type(screen.getByLabelText("Destination"), "https://example.com/temporary")
+    await user.click(screen.getByRole("button", { name: "Add" }))
+    await waitFor(() => expect(calls).toHaveLength(1))
+
+    await user.click(screen.getByRole("button", { name: "Remove" }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(calls).toHaveLength(1)
+
+    firstPut.resolve(json({ ok: true, redirects: calls[0] }))
+    await waitFor(() => expect(calls).toHaveLength(2))
+    expect(calls[1]).toEqual([])
   })
 
   it("does not save relative destinations", async () => {
