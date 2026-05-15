@@ -54,6 +54,21 @@ function deferred<T>() {
 }
 
 describe("App", () => {
+  it("renders the dashboard shell before redirects load", async () => {
+    const initialGet = deferred<Response>()
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => initialGet.promise),
+    )
+
+    render(<App />)
+
+    expect(screen.getByText("Redirects")).not.toBeNull()
+    expect(screen.getByText("Rules")).not.toBeNull()
+    expect(screen.queryByText("Checking access")).toBeNull()
+    initialGet.resolve(json([]))
+  })
+
   it("shows an access error when initial loading fails", async () => {
     mockApi([], 200, 403)
 

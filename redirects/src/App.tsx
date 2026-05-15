@@ -18,7 +18,6 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Spinner } from "@/components/ui/spinner"
 
 type RedirectRule = {
   id?: string
@@ -26,8 +25,6 @@ type RedirectRule = {
   destination: string
   code: 301 | 302
 }
-
-type LoadState = "loading" | "ready" | "blocked"
 
 async function fetchJson<T>(url: string, options: RequestInit = {}) {
   const response = await fetch(url, {
@@ -82,7 +79,7 @@ function redirectsForSave(rules: RedirectRule[]) {
 }
 
 function App() {
-  const [loadState, setLoadState] = useState<LoadState>("loading")
+  const [blocked, setBlocked] = useState(false)
   const [redirects, setRedirects] = useState<RedirectRule[]>([])
   const [source, setSource] = useState("")
   const [destination, setDestination] = useState("")
@@ -169,13 +166,12 @@ function App() {
         )
         redirectsRef.current = collapsedRedirects
         setRedirects(collapsedRedirects)
-        setLoadState("ready")
       } catch (error) {
         if (cancelled) return
         setAccessError(
           error instanceof Error ? error.message : "Could not load redirects"
         )
-        setLoadState("blocked")
+        setBlocked(true)
       }
     }
 
@@ -186,23 +182,7 @@ function App() {
     }
   }, [])
 
-  if (loadState === "loading") {
-    return (
-      <main className="flex min-h-svh items-center justify-center bg-muted/30 p-4">
-        <Toaster />
-        <Card className="w-full max-w-sm">
-          <CardHeader>
-            <CardTitle>Checking access</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Spinner />
-          </CardContent>
-        </Card>
-      </main>
-    )
-  }
-
-  if (loadState === "blocked") {
+  if (blocked) {
     return (
       <main className="flex min-h-svh items-center justify-center bg-muted/30 p-4">
         <Toaster />
