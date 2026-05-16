@@ -1,5 +1,4 @@
 const API_BASE = "https://api.cloudflare.com/client/v4";
-const DEFAULT_LIST_NAME = "pages_to_custom_domain";
 
 export async function listRedirects(env) {
   const config = await configFor(env);
@@ -57,7 +56,7 @@ async function configFor(env) {
     hostname: required(env.REDIRECT_HOSTNAME, "REDIRECT_HOSTNAME")
       .replace(/^https?:\/\//, "")
       .replace(/\/+$/, ""),
-    listName: env.REDIRECT_LIST_NAME || DEFAULT_LIST_NAME,
+    listName: required(env.REDIRECT_LIST_NAME, "REDIRECT_LIST_NAME"),
   };
   const lists = await cf(config, "GET", "/rules/lists");
   const list = lists.find((entry) => entry.kind === "redirect" && entry.name === config.listName);

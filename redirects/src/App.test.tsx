@@ -10,6 +10,18 @@ type RedirectRule = {
   code: 301 | 302
 }
 
+const redirectsCacheKey = "redirects:rules:v1"
+
+function cacheRedirects(redirects: RedirectRule[], expiresAt = Date.now() + 60_000) {
+  sessionStorage.setItem(
+    redirectsCacheKey,
+    JSON.stringify({
+      expiresAt,
+      redirects,
+    }),
+  )
+}
+
 function json(body: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(body), {
     headers: { "Content-Type": "application/json" },
@@ -78,6 +90,49 @@ describe("App", () => {
     expect(screen.getByText("Access denied")).not.toBeNull()
   })
 
+  it("loads fresh redirects from session cache without calling the API", async () => {
+    cacheRedirects([
+      { source: "/cached", destination: "https://example.com/cached", code: 301 },
+    ])
+    const fetch = vi.fn()
+    vi.stubGlobal("fetch", fetch)
+
+    render(<App />)
+
+    expect(await screen.findByText("/cached")).not.toBeNull()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it("ignores expired cached redirects", async () => {
+    cacheRedirects(
+      [{ source: "/stale", destination: "https://example.com/stale", code: 301 }],
+      Date.now() - 1,
+    )
+    mockApi([
+      { source: "/fresh", destination: "https://example.com/fresh", code: 301 },
+    ])
+
+    render(<App />)
+
+    expect(await screen.findByText("/fresh")).not.toBeNull()
+    expect(screen.queryByText("/stale")).toBeNull()
+  })
+
+  it("caches redirects after the initial API read", async () => {
+    mockApi([
+      { source: "/loaded", destination: "https://example.com/loaded", code: 301 },
+    ])
+
+    render(<App />)
+    await screen.findByText("/loaded")
+
+    const cached = JSON.parse(sessionStorage.getItem(redirectsCacheKey) || "{}")
+    expect(cached.redirects).toEqual([
+      { source: "/loaded", destination: "https://example.com/loaded", code: 301 },
+    ])
+    expect(cached.expiresAt).toBeGreaterThan(Date.now())
+  })
+
   it("adds one displayed redirect and saves both slash variants", async () => {
     const user = userEvent.setup()
     const puts = mockApi([])
@@ -92,6 +147,11 @@ describe("App", () => {
     await waitFor(() =>
       expect(puts.at(-1)?.map((rule) => rule.source)).toEqual(["/papers", "/papers/"]),
     )
+    const cached = JSON.parse(sessionStorage.getItem(redirectsCacheKey) || "{}")
+    expect(cached.redirects.map((rule: RedirectRule) => rule.source)).toEqual([
+      "/papers",
+      "/papers/",
+    ])
   })
 
   it("keeps existing redirects when adding a new one", async () => {

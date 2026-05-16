@@ -1,4 +1,17 @@
 .wrangler/
 .playwright-cli/
 dist/
+dist-ssr/
 node_modules/
+logs/
+*.log
+*.local
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

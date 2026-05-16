@@ -1,3 +1,4 @@
+import * as React from "react"
 import { useEffect, useRef, useState } from "react"
 import {
   ExternalLinkIcon,
@@ -25,6 +26,9 @@ type RedirectRule = {
   destination: string
   code: 301 | 302
 }
+
+const REDIRECTS_CACHE_KEY = "redirects:rules:v1"
+const REDIRECTS_CACHE_TTL_MS = 60_000
 
 async function fetchJson<T>(url: string, options: RequestInit = {}) {
   const response = await fetch(url, {
@@ -78,6 +82,35 @@ function redirectsForSave(rules: RedirectRule[]) {
   return Array.from(redirects.values())
 }
 
+function readCachedRedirects() {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(REDIRECTS_CACHE_KEY) || "null") as
+      | { expiresAt?: number; redirects?: RedirectRule[] }
+      | null
+    if (cached?.expiresAt && cached.expiresAt > Date.now()) {
+      return Array.isArray(cached.redirects) ? cached.redirects : null
+    }
+    sessionStorage.removeItem(REDIRECTS_CACHE_KEY)
+  } catch {
+    // Ignore invalid cache entries and read from the API.
+  }
+  return null
+}
+
+function writeCachedRedirects(redirects: RedirectRule[]) {
+  try {
+    sessionStorage.setItem(
+      REDIRECTS_CACHE_KEY,
+      JSON.stringify({
+        expiresAt: Date.now() + REDIRECTS_CACHE_TTL_MS,
+        redirects,
+      })
+    )
+  } catch {
+    // Ignore unavailable storage; the API remains the source of truth.
+  }
+}
+
 function App() {
   const [blocked, setBlocked] = useState(false)
   const [redirects, setRedirects] = useState<RedirectRule[]>([])
@@ -89,7 +122,8 @@ function App() {
   const saveQueueRef = useRef(Promise.resolve())
 
   function saveRedirects(nextRedirects: RedirectRule[]) {
-    const body = JSON.stringify({ redirects: redirectsForSave(nextRedirects) })
+    const redirects = redirectsForSave(nextRedirects)
+    const body = JSON.stringify({ redirects })
     saveQueueRef.current = saveQueueRef.current
       .catch(() => undefined)
       .then(async () => {
@@ -97,6 +131,7 @@ function App() {
           method: "PUT",
           body,
         })
+        writeCachedRedirects(redirects)
       })
       .catch((error: Error) => {
         toast.error(error.message)
@@ -156,8 +191,11 @@ function App() {
 
     async function loadInitialData() {
       try {
-        const nextRedirects = await fetchJson<RedirectRule[]>("/redirects/api")
+        const nextRedirects =
+          readCachedRedirects() ??
+          (await fetchJson<RedirectRule[]>("/redirects/api"))
         if (cancelled) return
+        writeCachedRedirects(nextRedirects)
         const collapsedRedirects = collapseRedirects(nextRedirects).map(
           (rule, index) => ({
             id: rule.id || `${rule.source}-${index}`,

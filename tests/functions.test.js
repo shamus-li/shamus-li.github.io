@@ -287,8 +287,14 @@ describe("redirect store", () => {
   it("fails when the configured redirect list does not exist", async () => {
     mockCloudflare({ lists: [{ id: "other", name: "other", kind: "redirect" }] });
 
-    await expect(listRedirects(env())).rejects.toThrow(
-      'Cloudflare Bulk Redirect List "pages_to_custom_domain" was not found',
+    await expect(listRedirects(env({ REDIRECT_LIST_NAME: "missing_list" }))).rejects.toThrow(
+      'Cloudflare Bulk Redirect List "missing_list" was not found',
+    );
+  });
+
+  it("requires the redirect list name to come from configuration", async () => {
+    await expect(listRedirects(env({ REDIRECT_LIST_NAME: "" }))).rejects.toThrow(
+      "REDIRECT_LIST_NAME is not configured",
     );
   });
 
