@@ -1,0 +1,32 @@
+{
+  "azimuth_slots": 28,
+  "elevations_deg": [
+    -15.0,
+    5.0,
+    25.0,
+    45.0
+  ],
+  "front_arc_steps": 7,
+  "default_light": [
+    -0.32525,
+    0.0738
+  ],
+  "azimuth_response": 2.4,
+  "elevation_response": 5.0,
+  "tiers": {
+    "standard": {
+      "version": "48f40b28d3f68940",
+      "source_size": [
+        720,
+        466
+      ]
+    },
+    "high": {
+      "version": "fe275322176ebe7f",
+      "source_size": [
+        1440,
+        932
+      ]
+    }
+  }
+}

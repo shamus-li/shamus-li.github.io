@@ -3,43 +3,39 @@
     <head>
         <meta charset="UTF-8">
         <title>Shamus Li</title>
-        <meta name="description" content="Shamus Li is a PhD student at Cornell University studying computational imaging." />
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta property="og:title" content="Shamus Li" />
-        <meta property="og:description" content="Shamus Li is a PhD student at Cornell University studying computational imaging." />
+        <meta name="description" content="Shamus Li is a PhD student at Cornell University studying computational imaging.">
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+        <meta name="theme-color" content="#000000">
+        <meta property="og:title" content="Shamus Li">
+        <meta property="og:description" content="Shamus Li is a PhD student at Cornell University studying computational imaging.">
         <link rel="canonical" href="https://shamus.li/">
-        <link rel="stylesheet" href="static/styles/styles.css" />
+        <link rel="stylesheet" href="static/styles/styles.css?v=12">
         <link rel="icon" type="image/x-icon" href="static/resources/favicon.png">
+        <script src="static/scripts/portrait-light-field.js?v=29" defer></script>
     </head>
     <body>
         <div class="container">
-            <div class="title"><span id="typing">Computational Imaging</span> at Cornell.</div>
-            <div class="photo"><img src="static/resources/shamus-picture.webp" alt="Shamus Li"></div>
+            <div class="title"><span>Computational Imaging</span> at Cornell.</div>
+            <picture>
+                <source media="(max-width: 450px)" srcset="static/resources/relight-field/standard/default.webp">
+                <img class="portrait" id="portraitFallback"
+                    src="static/resources/relight-field/standard/default.webp"
+                    srcset="static/resources/relight-field/standard/default.webp 720w, static/resources/relight-field/high/default.webp 1440w"
+                    sizes="(max-width: 720px) 100vw, 720px"
+                    width="720" height="466" fetchpriority="high" decoding="async"
+                    alt="Shamus Li">
+            </picture>
+            <canvas class="portrait" id="portraitRelight" role="img" aria-label="Interactive portrait of Shamus Li" hidden>Shamus Li</canvas>
+            <div class="relight-field" id="relightField" hidden>
+                <button class="relight-handle" type="button" aria-label="Move portrait light"></button>
+            </div>
         </div>
         <div id="header">
             <div id="name">Shamus Li</div>
             <div>
-                <a href="static/resources/Shamus Resume.pdf">Resume</a>
+                <a href="static/resources/Shamus%20Resume.pdf">Resume</a>
                 <a href="https://www.linkedin.com/in/shamus-li/">LinkedIn</a>
             </div>
         </div>
-        <script>
-            function adjustTitlePosition() {
-                const titleElement = document.querySelector('.title');
-                // Calculate the current font size of the title
-                const style = window.getComputedStyle(titleElement, null).getPropertyValue('font-size');
-                const currentFontSize = parseFloat(style);
-                if (window.innerHeight > 400) {
-                    const diff = 90 - currentFontSize;
-                    const newBottomValue = 75 + 0.05 * (diff / 2) + '%'; // 55% is the initial bottom value
-                    
-                    titleElement.style.bottom = newBottomValue;
-                } else {
-                    titleElement.style.bottom = '33vh'
-                }
-            }
-            adjustTitlePosition();
-            window.addEventListener('resize', adjustTitlePosition);
-        </script>
     </body>
 </html>

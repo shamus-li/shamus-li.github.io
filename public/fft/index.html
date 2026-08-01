@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Real Space <-> FFT Space Editor</title>
+  <title>Real Space &harr; FFT Space Editor</title>
+  <link rel="icon" type="image/x-icon" href="/static/resources/favicon.png">
   <style>
     :root {
       color-scheme: light dark;
@@ -30,6 +31,7 @@
       padding: 12px;
       display: grid;
       gap: 10px;
+      min-width: 0;
       box-shadow: 0 4px 16px color-mix(in oklab, CanvasText 8%, transparent);
     }
 
@@ -52,6 +54,15 @@
       gap: 8px;
       flex-wrap: wrap;
       align-items: center;
+      min-width: 0;
+    }
+
+    .row label {
+      min-width: 0;
+    }
+
+    .row input[type="file"] {
+      max-width: 100%;
     }
 
     input,
@@ -99,47 +110,47 @@
   <div class="wrap">
     <section class="card">
       <h1>Real Space</h1>
-      <canvas id="realCanvas" width="256" height="256" aria-label="Real-space canvas"></canvas>
+      <canvas id="realCanvas" width="256" height="256" role="img" aria-label="Real-space canvas"></canvas>
       <div class="row">
         <label>Brush <input id="realBrush" type="range" min="1" max="40" value="12"></label>
-        <button id="realClear">Clear</button>
+        <button id="realClear" type="button">Clear</button>
         <button id="realEraser" type="button">Eraser: Off</button>
         <label><input id="realLive" type="checkbox" checked> Live -> FFT</label>
-        <button id="realUpdate">Update FFT</button>
+        <button id="realUpdate" type="button">Update FFT</button>
       </div>
       <div class="row">
         <label>Upload <input id="realFile" type="file" accept="image/*"></label>
       </div>
       <div class="presets" id="realPresets">
-        <button class="preset-btn" data-preset="dot">Dot</button>
-        <button class="preset-btn" data-preset="two-dots">Two Dots</button>
-        <button class="preset-btn" data-preset="line">Line</button>
-        <button class="preset-btn" data-preset="circle">Circle</button>
-        <button class="preset-btn" data-preset="grid">Grid</button>
+        <button class="preset-btn" type="button" data-preset="dot">Dot</button>
+        <button class="preset-btn" type="button" data-preset="two-dots">Two Dots</button>
+        <button class="preset-btn" type="button" data-preset="line">Line</button>
+        <button class="preset-btn" type="button" data-preset="circle">Circle</button>
+        <button class="preset-btn" type="button" data-preset="grid">Grid</button>
       </div>
       <div class="small">Draw or upload here, then transform to FFT magnitude view.</div>
     </section>
 
     <section class="card">
       <h1>FFT Space (Shifted Log Magnitude)</h1>
-      <canvas id="fftCanvas" width="256" height="256" aria-label="FFT-space canvas"></canvas>
+      <canvas id="fftCanvas" width="256" height="256" role="img" aria-label="FFT-space canvas"></canvas>
       <div class="row">
         <label>Brush <input id="fftBrush" type="range" min="1" max="40" value="6"></label>
-        <button id="fftClear">Clear</button>
+        <button id="fftClear" type="button">Clear</button>
         <button id="fftEraser" type="button">Eraser: Off</button>
         <label><input id="fftLive" type="checkbox" checked> Live -> Real</label>
-        <button id="fftUpdate">Update Real</button>
+        <button id="fftUpdate" type="button">Update Real</button>
       </div>
       <div class="row">
         <label>Upload <input id="fftFile" type="file" accept="image/*"></label>
       </div>
       <div class="presets" id="fftPresets">
-        <button class="preset-btn" data-preset="center">Center Dot</button>
-        <button class="preset-btn" data-preset="pair-x">Pair X</button>
-        <button class="preset-btn" data-preset="pair-y">Pair Y</button>
-        <button class="preset-btn" data-preset="diag-pair">Diag Pair</button>
-        <button class="preset-btn" data-preset="ring">Ring</button>
-        <button class="preset-btn" data-preset="cross">Cross</button>
+        <button class="preset-btn" type="button" data-preset="center">Center Dot</button>
+        <button class="preset-btn" type="button" data-preset="pair-x">Pair X</button>
+        <button class="preset-btn" type="button" data-preset="pair-y">Pair Y</button>
+        <button class="preset-btn" type="button" data-preset="diag-pair">Diag Pair</button>
+        <button class="preset-btn" type="button" data-preset="ring">Ring</button>
+        <button class="preset-btn" type="button" data-preset="cross">Cross</button>
       </div>
       <div class="small">Editing this side treats pixel intensity as spectrum magnitude and reconstructs real space using preserved phase from the latest real-space FFT.</div>
     </section>
@@ -237,25 +248,11 @@
       return out;
     }
 
-    function fftShift(matrix) {
+    function shiftFrequencyOrigin(matrix) {
       const h = matrix.length;
       const w = matrix[0].length;
-      const h2 = Math.floor(h / 2);
-      const w2 = Math.floor(w / 2);
-      const out = Array.from({ length: h }, () => new Array(w));
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          out[y][x] = matrix[(y + h2) % h][(x + w2) % w];
-        }
-      }
-      return out;
-    }
-
-    function ifftShift(matrix) {
-      const h = matrix.length;
-      const w = matrix[0].length;
-      const h2 = Math.ceil(h / 2);
-      const w2 = Math.ceil(w / 2);
+      const h2 = h / 2;
+      const w2 = w / 2;
       const out = Array.from({ length: h }, () => new Array(w));
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
@@ -323,15 +320,10 @@
     const realCtx = realCanvas.getContext('2d');
     const fftCtx = fftCanvas.getContext('2d');
     const SIZE = realCanvas.width;
-    const drawBuffer = document.createElement('canvas');
-    drawBuffer.width = SIZE;
-    drawBuffer.height = SIZE;
-    const drawBufCtx = drawBuffer.getContext('2d');
-
-    const putBuffer = document.createElement('canvas');
-    putBuffer.width = SIZE;
-    putBuffer.height = SIZE;
-    const putBufCtx = putBuffer.getContext('2d');
+    const scratchCanvas = document.createElement('canvas');
+    scratchCanvas.width = SIZE;
+    scratchCanvas.height = SIZE;
+    const scratchCtx = scratchCanvas.getContext('2d');
 
     const realBrush = document.getElementById('realBrush');
     const fftBrush = document.getElementById('fftBrush');
@@ -477,9 +469,9 @@
     }
 
     function canvasToGray01(canvas) {
-      drawBufCtx.clearRect(0, 0, SIZE, SIZE);
-      drawBufCtx.drawImage(canvas, 0, 0, SIZE, SIZE);
-      const img = drawBufCtx.getImageData(0, 0, SIZE, SIZE);
+      scratchCtx.clearRect(0, 0, SIZE, SIZE);
+      scratchCtx.drawImage(canvas, 0, 0, SIZE, SIZE);
+      const img = scratchCtx.getImageData(0, 0, SIZE, SIZE);
       const out = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
       for (let y = 0; y < SIZE; y++) {
         for (let x = 0; x < SIZE; x++) {
@@ -494,7 +486,7 @@
     }
 
     function renderGray01ToCanvas(grayMatrix, ctx, canvas) {
-      const imgData = putBufCtx.createImageData(SIZE, SIZE);
+      const imgData = scratchCtx.createImageData(SIZE, SIZE);
       for (let y = 0; y < SIZE; y++) {
         for (let x = 0; x < SIZE; x++) {
           const v = Math.max(0, Math.min(1, grayMatrix[y][x]));
@@ -506,10 +498,10 @@
           imgData.data[i + 3] = 255;
         }
       }
-      putBufCtx.putImageData(imgData, 0, 0);
+      scratchCtx.putImageData(imgData, 0, 0);
       ctx.imageSmoothingEnabled = false;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(putBuffer, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(scratchCanvas, 0, 0, canvas.width, canvas.height);
     }
 
     function updateFFTFromReal() {
@@ -526,13 +518,13 @@
       const measuredLogRange = Math.log(1 + maxMag);
       displayLogRange = measuredLogRange > 1e-9 ? measuredLogRange : DEFAULT_DISPLAY_LOG_RANGE;
       const log01 = magnitudeToLog01(mag, displayLogRange);
-      renderGray01ToCanvas(fftShift(log01), fftCtx, fftCanvas);
+      renderGray01ToCanvas(shiftFrequencyOrigin(log01), fftCtx, fftCanvas);
     }
 
     function updateRealFromFFT() {
       const shiftedLog01 = canvasToGray01(fftCanvas);
       const shiftedMag = shiftedLog01.map(row => row.map(v => estimateMagnitudeFromDisplay(v, displayLogRange)));
-      const mag = ifftShift(shiftedMag);
+      const mag = shiftFrequencyOrigin(shiftedMag);
 
       const freq = Array.from({ length: SIZE }, (_, y) =>
         Array.from({ length: SIZE }, (_, x) => {
