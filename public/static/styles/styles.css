@@ -1,97 +1,75 @@
-:root {
-    --page-gradient: linear-gradient(180deg, #000 0%, #02041A 56.25vh);
-
-    background-color: #02041A;
-    background-image: var(--page-gradient);
-    background-attachment: fixed;
+* {
+    box-sizing: border-box;
 }
 
 html,
 body {
-    letter-spacing: -0.01em;
+    background-image: linear-gradient(180deg, #000 0%, #02041A 56.25%);
+    letter-spacing: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Helvetica", "Arial", sans-serif;
-
+    margin: 0;
     -webkit-touch-callout: none;
     -webkit-user-select: none;
-    -khtml-user-select: none;
-    -moz-user-select: none;
-    -ms-user-select: none;
     user-select: none;
 }
 
 html {
-    background-color: #02041A;
     overflow: hidden;
     height: 100%;
+    width: 100%;
 }
 
 body {
-    background-color: #02041A;
-    background-image: var(--page-gradient);
-    background-attachment: fixed;
     height: 100%;
-    margin: 0;
-    overflow: auto;
-}
-
-body::before {
-    content: "";
-    position: fixed;
-    top: 0;
-    bottom: -100vh;
-    left: -100vw;
-    right: -100vw;
-    z-index: 0;
-    pointer-events: none;
-    background-color: #02041A;
-    background-image: var(--page-gradient);
-    background-repeat: no-repeat;
-    background-size: 100% 100vh;
+    min-height: 100svh;
+    overflow: hidden;
+    overscroll-behavior: none;
+    width: 100%;
 }
 
 #header {
     display: flex;
     justify-content: space-between;
+    align-items: center;
+    gap: 24px;
     position: fixed;
-    left: 40px;
-    right: 40px;
-    top: 40px;
-    font-size: min(20px, 4vw);
+    left: calc(40px + env(safe-area-inset-left));
+    right: calc(40px + env(safe-area-inset-right));
+    top: calc(40px + env(safe-area-inset-top));
+    z-index: 4;
+    font-size: 20px;
     font-weight: 500;
-    z-index: 1;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+#header > div:last-child {
+    display: flex;
+    gap: 16px;
 }
 
 .title {
-    font-size: min(90px, 5vw);
+    font-size: 72px;
     font-weight: 700;
     color: rgb(255, 255, 255);
     position: absolute;
     bottom: 75%;
-    line-height: 1;
-    white-space: normal;
+    left: 50%;
+    line-height: 0.98;
+    text-align: center;
+    transform: translateX(-50%);
+    white-space: nowrap;
     z-index: 1;
 }
 
-.photo img,
-.photo canvas {
-    max-height: 80%;
-    pointer-events: none;
+.portrait {
+    height: auto;
+    width: min(720px, 100vw, calc(68svh * 1.54496));
     position: absolute;
-    bottom: 0;
+    bottom: env(safe-area-inset-bottom);
     left: 50%;
-    max-width: 100%;
-    object-fit: contain;
     transform: translateX(-50%);
-    overflow: hidden;
     z-index: 2;
-}
-
-.photo canvas {
-    height: 80%;
-}
-
-.photo img.relight-fallback-hidden {
-    opacity: 0;
 }
 
 .relight-field {
@@ -99,7 +77,6 @@ body::before {
     inset: 0;
     z-index: 3;
     touch-action: none;
-    pointer-events: none;
 }
 
 .relight-handle {
@@ -107,13 +84,13 @@ body::before {
     width: 36px;
     height: 36px;
     padding: 0;
-    border: 1px solid rgb(255 255 255 / 48%);
+    border: 1px solid rgb(224 232 246 / 42%);
     border-radius: 50%;
+    appearance: none;
     transform: translate(-50%, -50%);
     cursor: grab;
-    pointer-events: auto;
-    background: radial-gradient(circle, rgb(255 255 255 / 92%), rgb(110 164 255 / 32%) 45%, rgb(110 164 255 / 0%) 72%);
-    box-shadow: 0 0 26px rgb(110 164 255 / 42%), inset 0 0 10px rgb(255 255 255 / 36%);
+    background: radial-gradient(circle, rgb(226 235 248 / 78%), rgb(110 164 255 / 28%) 45%, rgb(110 164 255 / 0%) 72%);
+    box-shadow: 0 0 24px rgb(110 164 255 / 34%), inset 0 0 10px rgb(226 235 248 / 26%);
 }
 
 .relight-handle:active {
@@ -125,38 +102,82 @@ body::before {
     left: 0;
     right: 0;
     bottom: 0;
-    min-height: 85vh;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    align-content: center;
-    z-index: 1;
+    height: 85vh;
+    height: 85svh;
+}
+
+@media (min-width: 1800px) {
+    .title {
+        font-size: 90px;
+    }
+}
+
+@media (max-width: 1200px) {
+    .title {
+        font-size: 54px;
+    }
+}
+
+@media (max-width: 900px) {
+    .title {
+        font-size: 38px;
+    }
 }
 
 @media (max-width: 700px) {
-    .title {
-        font-size: min(90px, 6.7vw);
-        display: flex;  /* Flex container */
-        flex-direction: column;  /* Reverse column order to push content upwards */
-        align-content: center;
-        justify-content: center;
-        align-items: center;  /* Align items to the start */
+    #header {
+        left: calc(20px + env(safe-area-inset-left));
+        right: calc(20px + env(safe-area-inset-right));
+        top: calc(20px + env(safe-area-inset-top));
+        gap: 16px;
+        font-size: 16px;
     }
 
-    .title::before {
-        content: "";  /* Empty content for the pseudo-element */
-        flex-grow: 1;  /* Allow it to grow and take up available space */
+    #header > div:last-child {
+        gap: 12px;
+    }
+
+    .title {
+        font-size: 30px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        white-space: normal;
     }
 }
 
-@media (max-height: 400px) {
+@media (max-width: 420px) {
     .title {
-        bottom: 30vh;
+        font-size: 24px;
+    }
+}
+
+@media (max-width: 320px) {
+    #header {
+        left: calc(12px + env(safe-area-inset-left));
+        right: calc(12px + env(safe-area-inset-right));
+        font-size: 14px;
     }
 
-    .photo img {
-        display: none;
+    #header > div:last-child {
+        gap: 8px;
+    }
+}
+
+@media (max-height: 500px) {
+    .container {
+        height: 100vh;
+        height: 100svh;
+    }
+
+    .title {
+        top: calc(72px + env(safe-area-inset-top));
+        bottom: auto;
+        font-size: 32px;
+    }
+
+    .portrait {
+        width: min(720px, 100vw, calc(65svh * 1.54496));
     }
 }
 
@@ -169,11 +190,10 @@ body::before {
 
 a {
     font-weight: 700;
-    padding-left: min(10px, 1vw);
-    padding-right: min(10px, 1vw);
     text-decoration: none;
     cursor: pointer;
     display: inline;
+    touch-action: manipulation;
 }
 
 #header a:link,
@@ -183,4 +203,4 @@ a {
 
 #header a:hover {
     color: rgb(180, 180, 180);
-} 
+}

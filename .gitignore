@@ -6,6 +6,7 @@ node_modules/
 logs/
 *.log
 *.local
+/tmp/
 .DS_Store
 .idea/
 .vscode/*
@@ -15,3 +16,6 @@ logs/
 *.njsproj
 *.sln
 *.sw?
+__pycache__/
+*.py[cod]
+.ruff_cache/
