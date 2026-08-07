@@ -1,12 +1,11 @@
-import * as React from "react"
+import type { ComponentProps } from "react"
 
 function Card({
   className,
   ...props
-}: React.ComponentProps<"div">) {
+}: ComponentProps<"div">) {
   return (
     <div
-      data-slot="card"
       className={[
         "flex flex-col gap-4 overflow-hidden rounded-xl bg-card py-4 text-sm text-card-foreground ring-1 ring-foreground/10",
         className,
@@ -18,10 +17,9 @@ function Card({
   )
 }
 
-function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
+function CardHeader({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
-      data-slot="card-header"
       className={[
         "grid auto-rows-min items-start gap-1 rounded-t-xl px-4",
         className,
@@ -33,12 +31,11 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
+function CardTitle({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
-      data-slot="card-title"
       className={[
-        "font-heading text-base leading-snug font-medium",
+        "text-base leading-snug font-medium",
         className,
       ]
         .filter(Boolean)
@@ -48,10 +45,9 @@ function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-function CardContent({ className, ...props }: React.ComponentProps<"div">) {
+function CardContent({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
-      data-slot="card-content"
       className={["px-4", className].filter(Boolean).join(" ")}
       {...props}
     />

@@ -2,25 +2,8 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
+import type { Redirect } from "../redirect"
 import App from "./App"
-
-type RedirectRule = {
-  source: string
-  destination: string
-  code: 301 | 302
-}
-
-const redirectsCacheKey = "redirects:rules:v1"
-
-function cacheRedirects(redirects: RedirectRule[], expiresAt = Date.now() + 60_000) {
-  sessionStorage.setItem(
-    redirectsCacheKey,
-    JSON.stringify({
-      expiresAt,
-      redirects,
-    }),
-  )
-}
 
 function json(body: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(body), {
@@ -29,30 +12,28 @@ function json(body: unknown, init: ResponseInit = {}) {
   })
 }
 
-function mockApi(redirects: RedirectRule[], putStatus = 200, getStatus = 200) {
-  const puts: RedirectRule[][] = []
+function mockApi(redirects: Redirect[], putStatus = 204, getStatus = 200) {
+  const puts: Redirect[][] = []
 
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = input.toString()
-      if (url === "/redirects/api" && init?.method === "PUT") {
-        const body = JSON.parse(String(init.body || "{}"))
-        puts.push(body.redirects || [])
+      if (input.toString() !== "/redirects/api") {
+        return json({ error: "Not found" }, { status: 404 })
+      }
+      if (init?.method === "PUT") {
+        const body = JSON.parse(String(init.body ?? "{}")) as {
+          redirects?: Redirect[]
+        }
+        puts.push(body.redirects ?? [])
         return putStatus >= 400
           ? json({ error: "Redirect update failed" }, { status: putStatus })
-          : json({ ok: true, redirects: body.redirects || [] })
+          : new Response(null, { status: putStatus })
       }
-      if (url === "/redirects/api") {
-        return getStatus >= 400
-          ? json({ error: "Access denied" }, { status: getStatus })
-          : json(redirects)
-      }
-      return json({ error: "not found" }, { status: 404 })
-    }),
-  )
-  vi.spyOn(crypto, "randomUUID").mockReturnValue(
-    "00000000-0000-4000-8000-000000000000",
+      return getStatus >= 400
+        ? json({ error: "Access denied" }, { status: getStatus })
+        : json(redirects)
+    })
   )
   return puts
 }
@@ -66,292 +47,221 @@ function deferred<T>() {
 }
 
 describe("App", () => {
-  it("renders the dashboard shell before redirects load", async () => {
+  it("renders immediately but disables mutations until redirects load", async () => {
+    const user = userEvent.setup()
     const initialGet = deferred<Response>()
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => initialGet.promise),
-    )
-
-    render(<App />)
-
-    expect(screen.getByText("Redirects")).not.toBeNull()
-    expect(screen.getByText("Rules")).not.toBeNull()
-    expect(screen.queryByText("Checking access")).toBeNull()
-    initialGet.resolve(json([]))
-  })
-
-  it("shows an access error when initial loading fails", async () => {
-    mockApi([], 200, 403)
-
-    render(<App />)
-
-    expect(await screen.findByText("Cloudflare Access required")).not.toBeNull()
-    expect(screen.getByText("Access denied")).not.toBeNull()
-  })
-
-  it("loads fresh redirects from session cache without calling the API", async () => {
-    cacheRedirects([
-      { source: "/cached", destination: "https://example.com/cached", code: 301 },
-    ])
-    const fetch = vi.fn()
+    const fetch = vi.fn(async () => initialGet.promise)
     vi.stubGlobal("fetch", fetch)
 
     render(<App />)
 
-    expect(await screen.findByText("/cached")).not.toBeNull()
-    expect(fetch).not.toHaveBeenCalled()
+    expect(screen.getByText("Redirects")).not.toBeNull()
+    expect(screen.getByText("Loading…")).not.toBeNull()
+    const add = screen.getByRole("button", { name: "Add" }) as HTMLButtonElement
+    expect(add.matches(":disabled")).toBe(true)
+    await user.click(add)
+    expect(fetch).toHaveBeenCalledTimes(1)
+
+    initialGet.resolve(json([]))
+    await waitFor(() => expect(add.matches(":disabled")).toBe(false))
   })
 
-  it("ignores expired cached redirects", async () => {
-    cacheRedirects(
-      [{ source: "/stale", destination: "https://example.com/stale", code: 301 }],
-      Date.now() - 1,
-    )
+  it("shows an accessible initial-load error", async () => {
+    mockApi([], 204, 403)
+
+    render(<App />)
+
+    expect(await screen.findByRole("alert")).not.toBeNull()
+    expect(screen.getByText("Could not load redirects")).not.toBeNull()
+    expect(screen.getByText("Access denied")).not.toBeNull()
+  })
+
+  it("loads canonical redirects with their status codes and links", async () => {
     mockApi([
-      { source: "/fresh", destination: "https://example.com/fresh", code: 301 },
+      {
+        source: "/external",
+        destination: "https://example.com/external",
+        code: 302,
+      },
     ])
 
     render(<App />)
 
-    expect(await screen.findByText("/fresh")).not.toBeNull()
-    expect(screen.queryByText("/stale")).toBeNull()
+    expect(await screen.findByText("/external")).not.toBeNull()
+    expect(screen.getByText("302")).not.toBeNull()
+    const link = screen.getByRole("link", {
+      name: "https://example.com/external",
+    })
+    expect(link.getAttribute("href")).toBe("https://example.com/external")
+    expect(link.getAttribute("target")).toBe("_blank")
+    expect(link.getAttribute("rel")).toBe("noreferrer")
   })
 
-  it("caches redirects after the initial API read", async () => {
-    mockApi([
-      { source: "/loaded", destination: "https://example.com/loaded", code: 301 },
-    ])
-
-    render(<App />)
-    await screen.findByText("/loaded")
-
-    const cached = JSON.parse(sessionStorage.getItem(redirectsCacheKey) || "{}")
-    expect(cached.redirects).toEqual([
-      { source: "/loaded", destination: "https://example.com/loaded", code: 301 },
-    ])
-    expect(cached.expiresAt).toBeGreaterThan(Date.now())
-  })
-
-  it("adds one displayed redirect and saves both slash variants", async () => {
+  it("adds one canonical redirect and resets the form after saving", async () => {
     const user = userEvent.setup()
     const puts = mockApi([])
 
     render(<App />)
-    await screen.findByText("Rules")
-    await user.type(screen.getByLabelText("Source"), "papers/")
-    await user.type(screen.getByLabelText("Destination"), "https://example.com/papers")
+    await screen.findByText("0 total")
+    const source = screen.getByLabelText("Source") as HTMLInputElement
+    const destination = screen.getByLabelText("Destination") as HTMLInputElement
+    const code = screen.getByLabelText("Code") as HTMLSelectElement
+    await user.type(source, "papers///")
+    await user.type(destination, "https://example.com/papers")
+    await user.selectOptions(code, "302")
     await user.click(screen.getByRole("button", { name: "Add" }))
 
-    expect(screen.getByText("/papers")).not.toBeNull()
-    await waitFor(() =>
-      expect(puts.at(-1)?.map((rule) => rule.source)).toEqual(["/papers", "/papers/"]),
-    )
-    const cached = JSON.parse(sessionStorage.getItem(redirectsCacheKey) || "{}")
-    expect(cached.redirects.map((rule: RedirectRule) => rule.source)).toEqual([
-      "/papers",
-      "/papers/",
-    ])
-  })
-
-  it("keeps existing redirects when adding a new one", async () => {
-    const user = userEvent.setup()
-    const puts = mockApi([
-      { source: "/old", destination: "https://example.com/old", code: 301 },
-    ])
-
-    render(<App />)
-    await screen.findByText("/old")
-    await user.type(screen.getByLabelText("Source"), "new")
-    await user.type(screen.getByLabelText("Destination"), "https://example.com/new")
-    await user.click(screen.getByRole("button", { name: "Add" }))
-
-    await waitFor(() =>
-      expect(puts.at(-1)).toEqual([
-        { source: "/old", destination: "https://example.com/old", code: 301 },
-        { source: "/old/", destination: "https://example.com/old", code: 301 },
-        { source: "/new", destination: "https://example.com/new", code: 301 },
-        { source: "/new/", destination: "https://example.com/new", code: 301 },
-      ]),
-    )
-  })
-
-  it("normalizes repeated trailing slashes and clears the form", async () => {
-    const user = userEvent.setup()
-    const puts = mockApi([])
-
-    render(<App />)
-    await screen.findByText("Rules")
-    await user.type(screen.getByLabelText("Source"), "papers///")
-    await user.type(screen.getByLabelText("Destination"), "https://example.com/papers")
-    await user.click(screen.getByRole("button", { name: "Add" }))
-
-    expect(screen.getByText("/papers")).not.toBeNull()
+    expect(await screen.findByText("/papers")).not.toBeNull()
     expect(screen.queryByText("/papers/")).toBeNull()
-    expect(screen.getByLabelText("Source")).toHaveProperty("value", "")
-    expect(screen.getByLabelText("Destination")).toHaveProperty("value", "")
     await waitFor(() =>
-      expect(puts.at(-1)?.map((rule) => rule.source)).toEqual(["/papers", "/papers/"]),
+      expect(puts).toEqual([
+        [
+          {
+            source: "/papers",
+            destination: "https://example.com/papers",
+            code: 302,
+          },
+        ],
+      ])
     )
+    expect(source.value).toBe("")
+    expect(destination.value).toBe("")
+    expect(code.value).toBe("301")
   })
 
   it("replaces an existing canonical source instead of duplicating it", async () => {
     const user = userEvent.setup()
     const puts = mockApi([
       { source: "/papers", destination: "https://example.com/old", code: 301 },
-      { source: "/papers/", destination: "https://example.com/old", code: 301 },
     ])
 
     render(<App />)
     await screen.findByText("/papers")
     await user.type(screen.getByLabelText("Source"), "papers/")
-    await user.type(screen.getByLabelText("Destination"), "https://example.com/new")
+    await user.type(
+      screen.getByLabelText("Destination"),
+      "https://example.com/new"
+    )
     await user.click(screen.getByRole("button", { name: "Add" }))
 
+    await screen.findByText("https://example.com/new")
     expect(screen.getAllByText("/papers")).toHaveLength(1)
     expect(screen.queryByText("https://example.com/old")).toBeNull()
-    expect(screen.getByText("https://example.com/new")).not.toBeNull()
-    await waitFor(() =>
-      expect(puts.at(-1)).toEqual([
-        { source: "/papers", destination: "https://example.com/new", code: 301 },
-        { source: "/papers/", destination: "https://example.com/new", code: 301 },
-      ]),
-    )
+    expect(puts.at(-1)).toEqual([
+      { source: "/papers", destination: "https://example.com/new", code: 301 },
+    ])
   })
 
-  it("collapses slash variants and removes both", async () => {
+  it("removes a redirect by canonical source", async () => {
     const user = userEvent.setup()
     const puts = mockApi([
       { source: "/old", destination: "https://example.com/old", code: 301 },
-      { source: "/old/", destination: "https://example.com/old", code: 301 },
     ])
 
     render(<App />)
     await screen.findByText("/old")
-    expect(screen.queryByText("/old/")).toBeNull()
-
     await user.click(screen.getByRole("button", { name: "Remove" }))
 
     await waitFor(() => expect(screen.queryByText("/old")).toBeNull())
-    expect(puts.at(-1)).toEqual([])
+    expect(puts).toEqual([[]])
   })
 
-  it("preserves API-provided status codes when autosaving another change", async () => {
+  it("locks all mutations while a save is in flight", async () => {
     const user = userEvent.setup()
-    const puts = mockApi([
-      { source: "/temporary", destination: "https://example.com/temporary", code: 302 },
-    ])
-
-    render(<App />)
-    await screen.findByText("/temporary")
-    expect(screen.getByText("302")).not.toBeNull()
-
-    await user.type(screen.getByLabelText("Source"), "permanent")
-    await user.type(screen.getByLabelText("Destination"), "https://example.com/permanent")
-    await user.click(screen.getByRole("button", { name: "Add" }))
-
-    await waitFor(() =>
-      expect(puts.at(-1)).toContainEqual({
-        source: "/temporary",
-        destination: "https://example.com/temporary",
-        code: 302,
-      }),
-    )
-  })
-
-  it("sends remove immediately after an add", async () => {
-    const user = userEvent.setup()
-    const puts = mockApi([])
-
-    render(<App />)
-    await screen.findByText("Rules")
-    await user.type(screen.getByLabelText("Source"), "temporary")
-    await user.type(screen.getByLabelText("Destination"), "https://example.com/temporary")
-    await user.click(screen.getByRole("button", { name: "Add" }))
-    await waitFor(() => expect(puts).toHaveLength(1))
-
-    await user.click(screen.getByRole("button", { name: "Remove" }))
-
-    await waitFor(() => expect(puts).toHaveLength(2))
-    expect(puts[1]).toEqual([])
-  })
-
-  it("serializes autosaves so later edits cannot be overwritten", async () => {
-    const user = userEvent.setup()
-    const firstPut = deferred<Response>()
-    const calls: RedirectRule[][] = []
-
+    const pendingPut = deferred<Response>()
+    const puts: Redirect[][] = []
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        if (input.toString() === "/redirects/api" && init?.method === "PUT") {
-          calls.push(JSON.parse(String(init.body || "{}")).redirects || [])
-          if (calls.length === 1) return firstPut.promise
-          return json({ ok: true, redirects: calls.at(-1) })
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "PUT") {
+          const body = JSON.parse(String(init.body)) as {
+            redirects: Redirect[]
+          }
+          puts.push(body.redirects)
+          return pendingPut.promise
         }
         return json([])
-      }),
-    )
-    vi.spyOn(crypto, "randomUUID").mockReturnValue(
-      "00000000-0000-4000-8000-000000000000",
+      })
     )
 
     render(<App />)
-    await screen.findByText("Rules")
-    await user.type(screen.getByLabelText("Source"), "temporary")
-    await user.type(screen.getByLabelText("Destination"), "https://example.com/temporary")
-    await user.click(screen.getByRole("button", { name: "Add" }))
-    await waitFor(() => expect(calls).toHaveLength(1))
-
-    await user.click(screen.getByRole("button", { name: "Remove" }))
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(calls).toHaveLength(1)
-
-    firstPut.resolve(json({ ok: true, redirects: calls[0] }))
-    await waitFor(() => expect(calls).toHaveLength(2))
-    expect(calls[1]).toEqual([])
-  })
-
-  it("does not save relative destinations", async () => {
-    const user = userEvent.setup()
-    const puts = mockApi([])
-
-    render(<App />)
-    await screen.findByText("Rules")
-    await user.type(screen.getByLabelText("Source"), "bad")
-    await user.type(screen.getByLabelText("Destination"), "/relative")
+    await screen.findByText("0 total")
+    await user.type(screen.getByLabelText("Source"), "pending")
+    await user.type(
+      screen.getByLabelText("Destination"),
+      "https://example.com/pending"
+    )
     await user.click(screen.getByRole("button", { name: "Add" }))
 
-    expect(await screen.findByText("Destination must be an absolute URL")).not.toBeNull()
-    expect(puts).toEqual([])
+    await screen.findByText("/pending")
+    const add = screen.getByRole("button", { name: "Add" }) as HTMLButtonElement
+    const remove = screen.getByRole("button", {
+      name: "Remove",
+    }) as HTMLButtonElement
+    expect(add.matches(":disabled")).toBe(true)
+    expect(remove.matches(":disabled")).toBe(true)
+    await user.click(remove)
+    expect(puts).toHaveLength(1)
+
+    pendingPut.resolve(new Response(null, { status: 204 }))
+    await waitFor(() => expect(add.matches(":disabled")).toBe(false))
   })
 
-  it("shows save failures without save status text", async () => {
+  it("rolls back a failed save and preserves the form", async () => {
     const user = userEvent.setup()
-    mockApi([], 500)
+    mockApi(
+      [{ source: "/old", destination: "https://example.com/old", code: 301 }],
+      500
+    )
 
     render(<App />)
-    await screen.findByText("Rules")
-    await user.type(screen.getByLabelText("Source"), "broken")
-    await user.type(screen.getByLabelText("Destination"), "https://example.com/broken")
+    await screen.findByText("/old")
+    const source = screen.getByLabelText("Source") as HTMLInputElement
+    const destination = screen.getByLabelText("Destination") as HTMLInputElement
+    await user.type(source, "broken")
+    await user.type(destination, "https://example.com/broken")
     await user.click(screen.getByRole("button", { name: "Add" }))
 
     expect(await screen.findByText("Redirect update failed")).not.toBeNull()
-    expect(screen.queryByText("Saved")).toBeNull()
+    await waitFor(() => expect(screen.queryByText("/broken")).toBeNull())
+    expect(screen.getByText("/old")).not.toBeNull()
+    expect(source.value).toBe("broken")
+    expect(destination.value).toBe("https://example.com/broken")
   })
 
-  it("renders destination links as external links", async () => {
-    mockApi([
-      { source: "/external", destination: "https://example.com/external", code: 301 },
-    ])
+  it("rejects non-HTTP destinations without saving", async () => {
+    const user = userEvent.setup()
+    const puts = mockApi([])
 
     render(<App />)
-    const link = await screen.findByRole("link", {
-      name: "https://example.com/external",
-    })
+    await screen.findByText("0 total")
+    await user.type(screen.getByLabelText("Source"), "bad")
+    await user.type(
+      screen.getByLabelText("Destination"),
+      "mailto:test@example.com"
+    )
+    await user.click(screen.getByRole("button", { name: "Add" }))
 
-    expect(link.getAttribute("href")).toBe("https://example.com/external")
-    expect(link.getAttribute("target")).toBe("_blank")
-    expect(link.getAttribute("rel")).toBe("noreferrer")
+    expect(
+      await screen.findByText("Destination must be an absolute HTTP(S) URL")
+    ).not.toBeNull()
+    expect(puts).toEqual([])
+  })
+
+  it("rejects a whitespace-only source without saving", async () => {
+    const user = userEvent.setup()
+    const puts = mockApi([])
+
+    render(<App />)
+    await screen.findByText("0 total")
+    await user.type(screen.getByLabelText("Source"), "   ")
+    await user.type(
+      screen.getByLabelText("Destination"),
+      "https://example.com/root"
+    )
+    await user.click(screen.getByRole("button", { name: "Add" }))
+
+    expect(await screen.findByText("Source is required")).not.toBeNull()
+    expect(puts).toEqual([])
   })
 })

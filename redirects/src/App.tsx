@@ -1,5 +1,4 @@
-import * as React from "react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import {
   ExternalLinkIcon,
   LogOutIcon,
@@ -9,234 +8,155 @@ import {
 } from "lucide-react"
 import { Toaster, toast } from "sonner"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button } from "./components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card"
+import { Input } from "./components/ui/input"
 import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
+  canonicalSource,
+  parseRedirects,
+  type Redirect,
+  type RedirectCode,
+} from "../redirect"
 
-type RedirectRule = {
-  id?: string
-  source: string
-  destination: string
-  code: 301 | 302
+function errorMessage(value: unknown, fallback: string) {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "error" in value &&
+    typeof value.error === "string"
+  ) {
+    return value.error
+  }
+  return fallback
 }
 
-const REDIRECTS_CACHE_KEY = "redirects:rules:v1"
-const REDIRECTS_CACHE_TTL_MS = 60_000
-
-async function fetchJson<T>(url: string, options: RequestInit = {}) {
-  const response = await fetch(url, {
+async function request(options?: RequestInit): Promise<unknown> {
+  const response = await fetch("/redirects/api", {
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json", ...options.headers },
     ...options,
   })
-  const body = await response.json().catch(() => ({}))
-  if (!response.ok)
-    throw new Error(body.error || `${response.status} ${response.statusText}`)
-  return body as T
-}
+  const body: unknown =
+    response.status === 204
+      ? undefined
+      : await response.json().catch(() => undefined)
 
-function normalizeSource(source: string) {
-  const trimmed = source.trim()
-  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`
-}
-
-function canonicalSource(source: string) {
-  const normalized = normalizeSource(source)
-  return normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized
-}
-
-function sourceVariants(source: string) {
-  const canonical = canonicalSource(source)
-  return canonical === "/" ? [canonical] : [canonical, `${canonical}/`]
-}
-
-function collapseRedirects(rules: RedirectRule[]) {
-  const bySource = new Map<string, RedirectRule>()
-  for (const rule of rules) {
-    bySource.set(canonicalSource(rule.source), rule)
-  }
-
-  return Array.from(bySource, ([source, rule]) => ({ ...rule, source }))
-}
-
-function redirectsForSave(rules: RedirectRule[]) {
-  const redirects = new Map<string, RedirectRule>()
-
-  for (const rule of rules) {
-    for (const source of sourceVariants(rule.source)) {
-      redirects.set(source, {
-        source,
-        destination: rule.destination,
-        code: rule.code,
-      })
-    }
-  }
-
-  return Array.from(redirects.values())
-}
-
-function readCachedRedirects() {
-  try {
-    const cached = JSON.parse(sessionStorage.getItem(REDIRECTS_CACHE_KEY) || "null") as
-      | { expiresAt?: number; redirects?: RedirectRule[] }
-      | null
-    if (cached?.expiresAt && cached.expiresAt > Date.now()) {
-      return Array.isArray(cached.redirects) ? cached.redirects : null
-    }
-    sessionStorage.removeItem(REDIRECTS_CACHE_KEY)
-  } catch {
-    // Ignore invalid cache entries and read from the API.
-  }
-  return null
-}
-
-function writeCachedRedirects(redirects: RedirectRule[]) {
-  try {
-    sessionStorage.setItem(
-      REDIRECTS_CACHE_KEY,
-      JSON.stringify({
-        expiresAt: Date.now() + REDIRECTS_CACHE_TTL_MS,
-        redirects,
-      })
+  if (!response.ok) {
+    throw new Error(
+      errorMessage(body, `${response.status} ${response.statusText}`)
     )
-  } catch {
-    // Ignore unavailable storage; the API remains the source of truth.
   }
+  return body
 }
 
 function App() {
-  const [blocked, setBlocked] = useState(false)
-  const [redirects, setRedirects] = useState<RedirectRule[]>([])
-  const [source, setSource] = useState("")
-  const [destination, setDestination] = useState("")
-  const [code, setCode] = useState<"301" | "302">("301")
-  const [accessError, setAccessError] = useState("")
-  const redirectsRef = useRef<RedirectRule[]>([])
-  const saveQueueRef = useRef(Promise.resolve())
+  const [redirects, setRedirects] = useState<Redirect[] | null>(null)
+  const [loadError, setLoadError] = useState("")
+  const [saving, setSaving] = useState(false)
 
-  function saveRedirects(nextRedirects: RedirectRule[]) {
-    const redirects = redirectsForSave(nextRedirects)
-    const body = JSON.stringify({ redirects })
-    saveQueueRef.current = saveQueueRef.current
-      .catch(() => undefined)
-      .then(async () => {
-        await fetchJson("/redirects/api", {
-          method: "PUT",
-          body,
-        })
-        writeCachedRedirects(redirects)
-      })
-      .catch((error: Error) => {
-        toast.error(error.message)
-      })
-  }
+  async function persist(nextRedirects: Redirect[]) {
+    if (!redirects || saving) return false
 
-  function commitRedirects(nextRedirects: RedirectRule[]) {
-    redirectsRef.current = nextRedirects
+    const previousRedirects = redirects
     setRedirects(nextRedirects)
-    saveRedirects(nextRedirects)
+    setSaving(true)
+    try {
+      await request({
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ redirects: nextRedirects }),
+      })
+      return true
+    } catch (error) {
+      setRedirects(previousRedirects)
+      toast.error(
+        error instanceof Error ? error.message : "Could not update redirects"
+      )
+      return false
+    } finally {
+      setSaving(false)
+    }
   }
 
-  function addRedirect(event: React.FormEvent<HTMLFormElement>) {
+  async function addRedirect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const nextSource = canonicalSource(source)
-    const nextDestination = destination.trim()
+    if (!redirects || saving) return
 
-    if (!/^https?:\/\//.test(nextDestination)) {
-      toast.error("Destination must be an absolute URL")
+    const form = event.currentTarget
+    const data = new FormData(form)
+    const rawSource = String(data.get("source") ?? "").trim()
+    if (!rawSource) {
+      toast.error("Source is required")
+      return
+    }
+    const source = canonicalSource(rawSource)
+    const destination = String(data.get("destination") ?? "").trim()
+    const code: RedirectCode = data.get("code") === "302" ? 302 : 301
+
+    let validDestination = false
+    try {
+      validDestination = ["http:", "https:"].includes(
+        new URL(destination).protocol
+      )
+    } catch {
+      // Invalid URLs are handled below.
+    }
+    if (!validDestination) {
+      toast.error("Destination must be an absolute HTTP(S) URL")
       return
     }
 
-    const nextRule = {
-      id: crypto.randomUUID(),
-      source: nextSource,
-      destination: nextDestination,
-      code: Number(code) as 301 | 302,
-    }
+    const nextRule = { source, destination, code }
+    const nextRedirects = redirects.some((rule) => rule.source === source)
+      ? redirects.map((rule) => (rule.source === source ? nextRule : rule))
+      : [...redirects, nextRule]
 
-    const currentRedirects = redirectsRef.current
-    const existingIndex = currentRedirects.findIndex(
-      (rule) => canonicalSource(rule.source) === nextSource
-    )
-    const nextRedirects =
-      existingIndex === -1
-        ? [...currentRedirects, nextRule]
-        : currentRedirects.map((rule, index) =>
-            index === existingIndex ? { ...nextRule, id: rule.id } : rule
-          )
-
-    commitRedirects(nextRedirects)
-    setSource("")
-    setDestination("")
-    setCode("301")
+    if (await persist(nextRedirects)) form.reset()
   }
 
-  function removeRule(id: string | undefined) {
-    commitRedirects(redirectsRef.current.filter((rule) => rule.id !== id))
-  }
-
-  function logOut() {
-    window.location.href = "/cdn-cgi/access/logout"
+  function removeRedirect(source: string) {
+    if (!redirects) return
+    void persist(redirects.filter((rule) => rule.source !== source))
   }
 
   useEffect(() => {
     let cancelled = false
 
-    async function loadInitialData() {
-      try {
-        const nextRedirects =
-          readCachedRedirects() ??
-          (await fetchJson<RedirectRule[]>("/redirects/api"))
-        if (cancelled) return
-        writeCachedRedirects(nextRedirects)
-        const collapsedRedirects = collapseRedirects(nextRedirects).map(
-          (rule, index) => ({
-            id: rule.id || `${rule.source}-${index}`,
-            ...rule,
-          })
-        )
-        redirectsRef.current = collapsedRedirects
-        setRedirects(collapsedRedirects)
-      } catch (error) {
-        if (cancelled) return
-        setAccessError(
-          error instanceof Error ? error.message : "Could not load redirects"
-        )
-        setBlocked(true)
-      }
-    }
-
-    void loadInitialData()
+    void request()
+      .then((body) => {
+        if (!cancelled) setRedirects(parseRedirects(body))
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setLoadError(
+            error instanceof Error ? error.message : "Could not load redirects"
+          )
+        }
+      })
 
     return () => {
       cancelled = true
     }
   }, [])
 
-  if (blocked) {
+  if (loadError) {
     return (
       <main className="flex min-h-svh items-center justify-center bg-muted/30 p-4">
         <Toaster />
         <Card className="w-full max-w-md">
           <CardHeader>
-            <CardTitle>Cloudflare Access required</CardTitle>
+            <CardTitle>Could not load redirects</CardTitle>
           </CardHeader>
           <CardContent>
-            <Alert>
-              <ShieldCheckIcon data-icon="inline-start" />
-              <AlertTitle>Access did not pass through</AlertTitle>
-              <AlertDescription>
-                {accessError ||
-                  "Protect /redirects* with a Cloudflare Access application."}
-              </AlertDescription>
-            </Alert>
+            <div
+              className="grid w-full grid-cols-[auto_1fr] gap-x-2 rounded-lg border bg-card px-2.5 py-2 text-left text-sm text-card-foreground"
+              role="alert"
+            >
+              <ShieldCheckIcon className="row-span-2 mt-0.5 size-4" />
+              <div className="font-medium">Redirects unavailable</div>
+              <div className="text-sm text-balance text-muted-foreground md:text-pretty">
+                {loadError}
+              </div>
+            </div>
           </CardContent>
         </Card>
       </main>
@@ -252,10 +172,15 @@ function App() {
             <div>
               <CardTitle className="text-4xl md:text-5xl">Redirects</CardTitle>
               <p className="mt-2 text-sm text-muted-foreground">
-                {redirects.length} total
+                {redirects === null ? "Loading…" : `${redirects.length} total`}
               </p>
             </div>
-            <Button variant="outline" onClick={logOut}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                window.location.href = "/cdn-cgi/access/logout"
+              }}
+            >
               <LogOutIcon data-icon="inline-start" />
               Sign out
             </Button>
@@ -268,11 +193,12 @@ function App() {
               <CardTitle>Rules</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
-              {redirects.map((rule) => (
+              {redirects?.map((rule) => (
                 <RedirectRow
-                  key={rule.id}
+                  disabled={saving}
+                  key={rule.source}
                   rule={rule}
-                  onRemove={() => removeRule(rule.id)}
+                  onRemove={() => removeRedirect(rule.source)}
                 />
               ))}
             </CardContent>
@@ -282,45 +208,42 @@ function App() {
             <CardHeader>
               <CardTitle>Add redirect</CardTitle>
             </CardHeader>
-            <CardContent className="flex flex-col gap-5">
-              <form className="flex flex-col gap-4" onSubmit={addRedirect}>
-                <div className="flex flex-col gap-5">
-                  <label className="flex flex-col gap-2">
-                    <span className="text-sm font-medium">Source</span>
-                    <Input
-                      required
-                      value={source}
-                      onChange={(event) => setSource(event.target.value)}
-                      placeholder="/new-link"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-2">
-                    <span className="text-sm font-medium">Destination</span>
-                    <Input
-                      required
-                      value={destination}
-                      onChange={(event) => setDestination(event.target.value)}
-                      placeholder="https://example.com"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-2">
-                    <span className="text-sm font-medium">Code</span>
-                    <select
-                      className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                      value={code}
-                      onChange={(event) =>
-                        setCode(event.target.value as "301" | "302")
-                      }
-                    >
-                      <option value="301">301 permanent</option>
-                      <option value="302">302 temporary</option>
-                    </select>
-                  </label>
-                </div>
-                <Button type="submit">
-                  <PlusIcon data-icon="inline-start" />
-                  Add
-                </Button>
+            <CardContent>
+              <form onSubmit={addRedirect}>
+                <fieldset
+                  className="flex flex-col gap-4 border-0 p-0"
+                  disabled={redirects === null || saving}
+                >
+                  <div className="flex flex-col gap-5">
+                    <label className="flex flex-col gap-2">
+                      <span className="text-sm font-medium">Source</span>
+                      <Input name="source" required placeholder="/new-link" />
+                    </label>
+                    <label className="flex flex-col gap-2">
+                      <span className="text-sm font-medium">Destination</span>
+                      <Input
+                        name="destination"
+                        required
+                        placeholder="https://example.com"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-2">
+                      <span className="text-sm font-medium">Code</span>
+                      <select
+                        className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                        defaultValue="301"
+                        name="code"
+                      >
+                        <option value="301">301 permanent</option>
+                        <option value="302">302 temporary</option>
+                      </select>
+                    </label>
+                  </div>
+                  <Button type="submit">
+                    <PlusIcon data-icon="inline-start" />
+                    Add
+                  </Button>
+                </fieldset>
               </form>
             </CardContent>
           </Card>
@@ -331,10 +254,12 @@ function App() {
 }
 
 function RedirectRow({
+  disabled,
   rule,
   onRemove,
 }: {
-  rule: RedirectRule
+  disabled: boolean
+  rule: Redirect
   onRemove: () => void
 }) {
   return (
@@ -349,13 +274,18 @@ function RedirectRow({
         <span className="truncate">{rule.destination}</span>
         <ExternalLinkIcon className="size-4 shrink-0" data-icon="inline-end" />
       </a>
-      <Badge variant="secondary">{rule.code}</Badge>
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" onClick={onRemove}>
-          <Trash2Icon data-icon="inline-start" />
-          Remove
-        </Button>
-      </div>
+      <span className="inline-flex h-5 w-fit shrink-0 items-center justify-center rounded-4xl bg-secondary px-2 py-0.5 text-xs font-medium whitespace-nowrap text-secondary-foreground">
+        {rule.code}
+      </span>
+      <Button
+        disabled={disabled}
+        variant="outline"
+        size="sm"
+        onClick={onRemove}
+      >
+        <Trash2Icon data-icon="inline-start" />
+        Remove
+      </Button>
     </div>
   )
 }

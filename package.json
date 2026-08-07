@@ -1,18 +1,37 @@
 {
   "private": true,
   "type": "module",
-  "workspaces": [
-    "redirects"
-  ],
   "scripts": {
-    "build": "npm test && npm run lint:redirects && npm run build:redirects",
-    "test": "npm run test:functions && npm run test:redirects",
-    "test:functions": "vitest run",
-    "test:redirects": "npm -w redirects test",
-    "lint:redirects": "npm -w redirects run lint",
-    "build:redirects": "npm -w redirects run build"
+    "build": "npm run typecheck && npm test && npm run lint && vite build",
+    "dev": "vite",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json && tsc -p functions/tsconfig.json"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "^5.2.8",
+    "@tailwindcss/vite": "^4.2.1",
+    "lucide-react": "^1.16.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "sonner": "^2.0.7",
+    "tailwindcss": "^4.2.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^24.12.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "globals": "^16.5.0",
+    "jsdom": "^29.1.1",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.57.1",
+    "vite": "^7.3.1",
     "vitest": "^4.1.6"
   }
 }

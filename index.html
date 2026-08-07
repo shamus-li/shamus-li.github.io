@@ -9,16 +9,16 @@
         <meta property="og:title" content="Shamus Li">
         <meta property="og:description" content="Shamus Li is a PhD student at Cornell University studying computational imaging.">
         <link rel="canonical" href="https://shamus.li/">
-        <link rel="stylesheet" href="static/styles/styles.css?v=12">
-        <link rel="icon" type="image/png" sizes="64x64" href="static/resources/favicon.png">
-        <script src="static/scripts/portrait-light-field.js?v=39" defer></script>
+        <link rel="stylesheet" href="/static/styles/styles.css?v=12">
+        <link rel="icon" type="image/png" sizes="64x64" href="/static/resources/favicon.png">
+        <script type="module" src="/src/portrait-light-field.ts"></script>
     </head>
     <body>
         <div class="container">
             <div class="title"><span>Computational Imaging</span> at Cornell.</div>
             <img class="portrait" id="portraitPoster"
-                src="static/resources/relight-field/standard/elev_02/az_00.webp?v=3"
-                srcset="static/resources/relight-field/standard/elev_02/az_00.webp?v=3 720w, static/resources/relight-field/high/elev_02/az_00.webp?v=3 1440w"
+                src="/static/resources/relight-field/standard/elev_02/az_00.webp?v=3"
+                srcset="/static/resources/relight-field/standard/elev_02/az_00.webp?v=3 720w, /static/resources/relight-field/high/elev_02/az_00.webp?v=3 1440w"
                 sizes="(max-width: 720px) 100vw, 720px"
                 width="720" height="466" fetchpriority="high" decoding="async"
                 alt="Shamus Li">
@@ -30,7 +30,7 @@
         <div id="header">
             <div id="name">Shamus Li</div>
             <div>
-                <a href="static/resources/Shamus%20Resume.pdf">Resume</a>
+                <a href="/static/resources/Shamus%20Resume.pdf">Resume</a>
                 <a href="https://www.linkedin.com/in/shamus-li/">LinkedIn</a>
             </div>
         </div>
