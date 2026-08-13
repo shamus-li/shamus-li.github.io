@@ -33,6 +33,7 @@
   const sourceHeight = (sourceWidth * 466) / 720
   const cacheLimit = highResolution ? 8 : 12
   const loadLimit = 8
+  const handleRadius = 19
   const cache = new Map<string, WebGLTexture>()
   const loads = new Map<string, Promise<WebGLTexture>>()
   const selectionLoads = new Set<string>()
@@ -42,6 +43,7 @@
   let weightsUniform: WebGLUniformLocation | null = null
   let target: Selection | undefined
   let dragging = false
+  let dragOffset: Point = { x: 0, y: 0 }
   let raf = 0
   let warmTimer = 0
 
@@ -320,15 +322,24 @@
   }
 
   function positionHandle() {
-    handle.style.left = `${rect.left + point.x * rect.width}px`
-    handle.style.top = `${rect.top + point.y * rect.height}px`
+    handle.style.left = `${clamp(
+      rect.left + point.x * rect.width,
+      handleRadius,
+      innerWidth - handleRadius
+    )}px`
+    handle.style.top = `${clamp(
+      rect.top + point.y * rect.height,
+      handleRadius,
+      innerHeight - handleRadius
+    )}px`
   }
 
   function render() {
     raf = 0
-    if (field.hidden || !ensureRenderer()) return
+    if (field.hidden) return
     positionHandle()
     target = frameSelection()
+    if (!ensureRenderer()) return
     if (!draw(target)) loadSelection(target)
   }
 
@@ -336,27 +347,55 @@
     if (!raf) raf = requestAnimationFrame(render)
   }
 
+  function requestRenderAfterFeedback() {
+    if (gl) requestRender()
+    else requestAnimationFrame(requestRender)
+  }
+
+  function updatePoint(nextPoint: Point) {
+    point = nextPoint
+    positionHandle()
+    requestRenderAfterFeedback()
+  }
+
   function moveLight(clientX: number, clientY: number) {
-    point = {
+    updatePoint({
       x: (clientX - rect.left) / rect.width,
       y: (clientY - rect.top) / rect.height,
-    }
-    requestRender()
+    })
+  }
+
+  function prewarm() {
+    void poster
+      .decode()
+      .catch(() => undefined)
+      .then(() => {
+        if (field.hidden || dragging || !ensureRenderer()) return
+        target = frameSelection()
+        if (!draw(target)) loadSelection(target)
+        scheduleWarmup(target)
+      })
   }
 
   field.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || !ensureRenderer()) return
+    if (event.button !== 0) return
     clearTimeout(warmTimer)
     dragging = true
+    const fromHandle = event.target === handle
+    dragOffset = fromHandle
+      ? {
+          x: rect.left + point.x * rect.width - event.clientX,
+          y: rect.top + point.y * rect.height - event.clientY,
+        }
+      : { x: 0, y: 0 }
     field.setPointerCapture(event.pointerId)
-    if (event.target === handle) handle.focus({ preventScroll: true })
-    moveLight(event.clientX, event.clientY)
+    if (fromHandle) handle.focus({ preventScroll: true })
+    moveLight(event.clientX + dragOffset.x, event.clientY + dragOffset.y)
     event.preventDefault()
   })
   field.addEventListener("pointermove", (event) => {
-    if (field.hasPointerCapture(event.pointerId)) {
-      moveLight(event.clientX, event.clientY)
-    }
+    if (!field.hasPointerCapture(event.pointerId)) return
+    moveLight(event.clientX + dragOffset.x, event.clientY + dragOffset.y)
   })
   field.addEventListener("lostpointercapture", () => {
     dragging = false
@@ -364,12 +403,6 @@
     target = selection
     requestRender()
     scheduleWarmup(selection)
-  })
-  handle.addEventListener("pointerenter", () => {
-    if (!dragging && ensureRenderer()) scheduleWarmup(frameSelection())
-  })
-  handle.addEventListener("focus", () => {
-    if (!dragging && ensureRenderer()) scheduleWarmup(frameSelection())
   })
   handle.addEventListener("keydown", (event) => {
     const delta = (
@@ -380,13 +413,9 @@
         ArrowDown: [0, 0.04],
       } as Record<string, [number, number]>
     )[event.key]
-    if (!delta || !ensureRenderer()) return
+    if (!delta) return
 
-    const handleRect = handle.getBoundingClientRect()
-    moveLight(
-      clamp(handleRect.left + 18 + delta[0] * rect.width, 18, innerWidth - 18),
-      clamp(handleRect.top + 18 + delta[1] * rect.height, 18, innerHeight - 18)
-    )
+    updatePoint({ x: point.x + delta[0], y: point.y + delta[1] })
     event.preventDefault()
   })
 
@@ -410,4 +439,5 @@
   window.visualViewport?.addEventListener("resize", resize)
   field.hidden = false
   resize()
+  prewarm()
 })()
