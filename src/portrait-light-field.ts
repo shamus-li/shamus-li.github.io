@@ -24,7 +24,7 @@
     nearest: { azimuth: number; elevation: number }
   }
 
-  const root = "/static/resources/relight-field"
+  const root = "/relight-field"
   const defaultPoint = { x: 0.265, y: -0.586 }
   const highResolution =
     poster.getBoundingClientRect().width * window.devicePixelRatio > 720
