@@ -204,3 +204,150 @@ a {
 #header a:hover {
     color: rgb(180, 180, 180);
 }
+
+#header a[aria-current="page"] {
+    color: #fff;
+}
+
+html.work-document,
+html.work-document body {
+    height: auto;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: auto;
+}
+
+body.work-page {
+    min-height: 100svh;
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+.work {
+    color: #fff;
+    margin: 0 auto;
+    max-width: 1000px;
+    min-height: 100svh;
+    padding: calc(110px + env(safe-area-inset-top)) calc(34px + env(safe-area-inset-right))
+        calc(61px + env(safe-area-inset-bottom)) calc(34px + env(safe-area-inset-left));
+}
+
+.publication {
+    align-items: start;
+    display: grid;
+    gap: 27px;
+    grid-template-columns: 160px minmax(0, 1fr);
+    padding: 0 0 32px;
+}
+
+.publication + .publication {
+    padding-top: 32px;
+}
+
+.publication-image {
+    aspect-ratio: 1;
+    background: #fff;
+    display: block;
+    line-height: 0;
+    overflow: hidden;
+}
+
+.publication-image img {
+    display: block;
+    height: 100%;
+    object-fit: cover;
+    width: 100%;
+}
+
+.publication-details h2 {
+    font-size: clamp(20px, 1.95vw, 27px);
+    letter-spacing: -0.035em;
+    line-height: 1.12;
+    margin: -3px 0 10px;
+}
+
+.publication-details h2 a,
+.publication-details h2 a:visited {
+    color: #fff;
+}
+
+.publication-authors,
+.publication-venues,
+.publication-links {
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.45;
+    margin: 0;
+}
+
+.publication-authors {
+    color: #a9abb3;
+    margin-bottom: 6px;
+}
+
+.publication-authors strong {
+    color: #fff;
+}
+
+.publication-venues {
+    color: #8a8d97;
+    font-style: italic;
+    margin-bottom: 8px;
+}
+
+.publication-venues p {
+    margin: 0;
+}
+
+.publication-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 7px;
+}
+
+.publication-links a,
+.publication-links a:visited {
+    color: #c7c7c7;
+}
+
+.publication-links a:hover,
+.publication-details h2 a:hover {
+    color: #fff;
+}
+
+.publication-links span {
+    color: #626671;
+}
+
+@media (max-width: 700px) {
+    .work {
+        padding: calc(88px + env(safe-area-inset-top)) calc(17px + env(safe-area-inset-right))
+            calc(41px + env(safe-area-inset-bottom)) calc(17px + env(safe-area-inset-left));
+    }
+
+    .publication {
+        gap: 19px;
+        grid-template-columns: 1fr;
+        padding-bottom: 34px;
+    }
+
+    .publication-image {
+        width: min(160px, 47vw);
+    }
+
+    .publication + .publication {
+        padding-top: 34px;
+    }
+
+    .publication-details h2 {
+        font-size: 21px;
+        margin-top: 0;
+    }
+
+    .publication-authors,
+    .publication-venues,
+    .publication-links {
+        font-size: 13px;
+    }
+}

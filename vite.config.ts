@@ -13,6 +13,7 @@ export default defineConfig({
       input: {
         main: path.join(repoRoot, "index.html"),
         redirects: path.join(redirectsRoot, "index.html"),
+        work: path.join(repoRoot, "work/index.html"),
       },
     },
   },
