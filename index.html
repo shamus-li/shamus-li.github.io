@@ -16,12 +16,17 @@
     <body>
         <div class="container">
             <div class="title"><span>Computational Imaging</span> at Cornell.</div>
-            <img class="portrait" id="portraitPoster"
-                src="/relight-field/standard/elev_02/az_00.webp?v=3"
-                srcset="/relight-field/standard/elev_02/az_00.webp?v=3 720w, /relight-field/high/elev_02/az_00.webp?v=3 1440w"
-                sizes="(max-width: 720px) 100vw, 720px"
-                width="720" height="466" fetchpriority="high" decoding="async"
-                alt="Shamus Li">
+            <picture>
+                <source type="image/avif"
+                    srcset="/relight-field/standard/poster.avif?v=4 720w, /relight-field/high/poster.avif?v=4 1440w"
+                    sizes="(max-width: 720px) 100vw, 720px">
+                <img class="portrait" id="portraitPoster"
+                    src="/relight-field/standard/poster.webp?v=4"
+                    srcset="/relight-field/standard/poster.webp?v=4 720w, /relight-field/high/poster.webp?v=4 1440w"
+                    sizes="(max-width: 720px) 100vw, 720px"
+                    width="720" height="466" fetchpriority="high" decoding="async"
+                    alt="Shamus Li">
+            </picture>
             <canvas class="portrait" id="portraitRelight" role="img" aria-label="Interactive portrait of Shamus Li" hidden>Shamus Li</canvas>
             <div class="relight-field" id="relightField" hidden>
                 <button class="relight-handle" type="button" aria-label="Move portrait light"></button>

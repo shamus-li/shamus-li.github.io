@@ -1,3 +1,5 @@
+import portraitWeights from "./portrait-light-field-weights.json"
+
 ;(function () {
   const canvasElement = document.getElementById("portraitRelight")
   const posterElement = document.getElementById("portraitPoster")
@@ -7,7 +9,9 @@
     !(canvasElement instanceof HTMLCanvasElement) ||
     !(posterElement instanceof HTMLImageElement) ||
     !(fieldElement instanceof HTMLElement) ||
-    !(handleElement instanceof HTMLButtonElement)
+    !(handleElement instanceof HTMLButtonElement) ||
+    // The basis images are AVIF; without it the poster stays a still image.
+    !new URL(posterElement.currentSrc, location.href).pathname.endsWith(".avif")
   )
     return
 
@@ -17,52 +21,59 @@
   const handle = handleElement
 
   type Point = { x: number; y: number }
-  type Frame = { file: string; weight: number }
-  type Selection = {
-    key: string
-    frames: Frame[]
-    nearest: { azimuth: number; elevation: number }
-  }
 
-  const root = "/relight-field"
   const defaultPoint = { x: 0.265, y: -0.586 }
   const highResolution =
     poster.getBoundingClientRect().width * window.devicePixelRatio > 720
   const tier = highResolution ? "high" : "standard"
+  const root = `/relight-field/${tier}`
+  const frameWeights: Record<string, number[]> = portraitWeights[tier]
+  const components = frameWeights[frameName(0, 0)].length
   const sourceWidth = highResolution ? 1440 : 720
   const sourceHeight = (sourceWidth * 466) / 720
-  const cacheLimit = highResolution ? 8 : 12
-  const loadLimit = 8
   const handleRadius = 19
-  const cache = new Map<string, WebGLTexture>()
-  const loads = new Map<string, Promise<WebGLTexture>>()
-  const selectionLoads = new Set<string>()
   let point: Point = { ...defaultPoint }
   let rect: DOMRect
   let gl: WebGLRenderingContext | null = null
   let weightsUniform: WebGLUniformLocation | null = null
-  let target: Selection | undefined
-  let dragging = false
+  let ready = false
   let dragOffset: Point = { x: 0, y: 0 }
   let raf = 0
-  let warmTimer = 0
 
   const clamp = (value: number, minimum: number, maximum: number) =>
     Math.max(minimum, Math.min(maximum, value))
 
-  function frameFile(elevation: number, azimuth: number) {
-    return `elev_${String(elevation).padStart(2, "0")}/az_${String(azimuth).padStart(2, "0")}.webp`
+  function frameName(elevation: number, azimuth: number) {
+    return `elev_${String(elevation).padStart(2, "0")}/az_${String(azimuth).padStart(2, "0")}`
   }
 
-  function frameSelection(): Selection {
-    const signedAzimuth = -Math.tanh((point.x - defaultPoint.x) * 3) * 7
+  // The requested point kept within the page, so the handle marks the light.
+  function lightPoint(): Point {
+    return {
+      x: clamp(
+        point.x,
+        (handleRadius - rect.left) / rect.width,
+        (innerWidth - handleRadius - rect.left) / rect.width
+      ),
+      y: clamp(
+        point.y,
+        (handleRadius - rect.top) / rect.height,
+        (innerHeight - handleRadius - rect.top) / rect.height
+      ),
+    }
+  }
+
+  // Bilinear blend of the basis weights of the four frames around the light.
+  function lightWeights() {
+    const light = lightPoint()
+    const signedAzimuth = -Math.tanh((light.x - defaultPoint.x) * 3) * 7
     const azimuth = signedAzimuth < 0 ? signedAzimuth + 28 : signedAzimuth
-    const elevation = clamp(2 - (point.y - defaultPoint.y) * 2.315, 0, 3)
+    const elevation = clamp(2 - (light.y - defaultPoint.y) * 2.315, 0, 3)
     const azimuth0 = Math.floor(azimuth) % 28
     const elevation0 = Math.floor(elevation)
     const azimuthWeight = azimuth - Math.floor(azimuth)
     const elevationWeight = elevation - elevation0
-    const merged = new Map<string, number>()
+    const blended = new Float32Array(components)
     for (const [nextElevation, verticalWeight] of [
       [elevation0, 1 - elevationWeight],
       [Math.min(elevation0 + 1, 3), elevationWeight],
@@ -73,19 +84,12 @@
       ]) {
         const weight = verticalWeight * horizontalWeight
         if (weight <= 0.0001) continue
-        const file = frameFile(nextElevation, nextAzimuth)
-        merged.set(file, (merged.get(file) || 0) + weight)
+        const frame = frameWeights[frameName(nextElevation, nextAzimuth)]
+        for (let index = 0; index < blended.length; index += 1)
+          blended[index] += frame[index] * weight
       }
     }
-    const frames = Array.from(merged, ([file, weight]) => ({ file, weight }))
-    return {
-      key: frames.map(({ file }) => file).join("|"),
-      frames,
-      nearest: {
-        azimuth: Math.round(azimuth) % 28,
-        elevation: Math.round(elevation),
-      },
-    }
+    return blended
   }
 
   function compileShader(
@@ -106,6 +110,8 @@
   }
 
   function initializeRenderer(renderer: WebGLRenderingContext) {
+    if (renderer.getParameter(renderer.MAX_TEXTURE_IMAGE_UNITS) < components + 1)
+      throw new Error("Too few texture units for the portrait basis")
     const vertex = compileShader(
       renderer,
       renderer.VERTEX_SHADER,
@@ -123,17 +129,16 @@
       renderer.FRAGMENT_SHADER,
       `
             precision mediump float;
-            uniform sampler2D frame0;
-            uniform sampler2D frame1;
-            uniform sampler2D frame2;
-            uniform sampler2D frame3;
-            uniform vec4 weights;
+            uniform sampler2D mean;
+            uniform sampler2D basis[${components}];
+            uniform float weights[${components}];
             varying vec2 uv;
             void main() {
-                gl_FragColor = texture2D(frame0, uv) * weights.x
-                    + texture2D(frame1, uv) * weights.y
-                    + texture2D(frame2, uv) * weights.z
-                    + texture2D(frame3, uv) * weights.w;
+                vec4 color = texture2D(mean, uv);
+                for (int index = 0; index < ${components}; index++) {
+                    color.rgb += weights[index] * (texture2D(basis[index], uv).rgb * 2.0 - 1.0);
+                }
+                gl_FragColor = color;
             }
         `
     )
@@ -162,12 +167,11 @@
     const position = renderer.getAttribLocation(program, "position")
     renderer.enableVertexAttribArray(position)
     renderer.vertexAttribPointer(position, 2, renderer.FLOAT, false, 0, 0)
-    for (let index = 0; index < 4; index += 1) {
-      renderer.uniform1i(
-        renderer.getUniformLocation(program, `frame${index}`),
-        index
-      )
-    }
+    renderer.uniform1i(renderer.getUniformLocation(program, "mean"), 0)
+    renderer.uniform1iv(
+      renderer.getUniformLocation(program, "basis"),
+      Array.from({ length: components }, (_, index) => index + 1)
+    )
     weightsUniform = renderer.getUniformLocation(program, "weights")
     renderer.viewport(0, 0, canvas.width, canvas.height)
   }
@@ -179,183 +183,86 @@
     poster.hidden = false
   }
 
-  function ensureRenderer() {
-    if (gl) return true
-    try {
-      gl = canvas.getContext("webgl", {
-        alpha: true,
-        antialias: false,
-        depth: false,
-        desynchronized: true,
-        powerPreference: "high-performance",
-        premultipliedAlpha: false,
-        stencil: false,
-      })
-      if (!gl) throw new Error("WebGL rendering is unavailable")
-      initializeRenderer(gl)
-      return true
-    } catch (error) {
-      fail(error)
-      return false
-    }
-  }
-
-  function uploadTexture(bitmap: ImageBitmap) {
+  function uploadTexture(unit: number, bitmap: ImageBitmap) {
     if (!gl) throw new Error("WebGL rendering is unavailable")
     const texture = gl.createTexture()
     if (!texture) throw new Error("Could not create portrait texture")
+    gl.activeTexture(gl.TEXTURE0 + unit)
     gl.bindTexture(gl.TEXTURE_2D, texture)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap)
-    return texture
+    bitmap.close()
   }
 
-  function textureForFrame(file: string): Promise<WebGLTexture> {
-    const cached = cache.get(file)
-    if (cached) {
-      cache.delete(file)
-      cache.set(file, cached)
-      return Promise.resolve(cached)
-    }
-    const activeLoad = loads.get(file)
-    if (activeLoad) return activeLoad
-
-    const promise = fetch(`${root}/${tier}/${file}?v=3`)
+  function loadImage(file: string) {
+    return fetch(`${root}/${file}.avif?v=4`)
       .then((response) => {
         if (!response.ok)
-          throw new Error(`Portrait frame failed: ${response.status}`)
+          throw new Error(`Portrait basis failed: ${response.status}`)
         return response.blob()
       })
-      .then((blob) => createImageBitmap(blob, { premultiplyAlpha: "none" }))
-      .then((bitmap) => {
-        const texture = uploadTexture(bitmap)
-        bitmap.close()
-        cache.set(file, texture)
-        trimCache()
-        return texture
-      })
-      .finally(() => {
-        loads.delete(file)
-        requestRender()
-      })
-    loads.set(file, promise)
-    return promise
+      .then((blob) =>
+        createImageBitmap(blob, {
+          colorSpaceConversion: "none",
+          premultiplyAlpha: "none",
+        })
+      )
   }
 
-  function trimCache(keep = new Set(target?.frames.map(({ file }) => file))) {
-    for (const [file, texture] of cache) {
-      if (cache.size <= cacheLimit) break
-      if (keep.has(file)) continue
-      gl?.deleteTexture(texture)
-      cache.delete(file)
-    }
-  }
-
-  function draw(selection: Selection) {
-    if (!gl) return false
-    const frames = selection.frames.map(({ file, weight }) => ({
-      file,
-      weight,
-      texture: cache.get(file),
-    }))
-    if (frames.some(({ texture }) => !texture)) return false
-
-    const weights = new Float32Array(4)
-    for (let index = 0; index < 4; index += 1) {
-      const frame = frames[index] || frames[0]
-      if (!frame.texture) return false
-      gl.activeTexture(gl.TEXTURE0 + index)
-      gl.bindTexture(gl.TEXTURE_2D, frame.texture)
-      weights[index] = frames[index]?.weight || 0
-    }
-    gl.uniform4fv(weightsUniform, weights)
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
-    canvas.hidden = false
-    poster.hidden = true
-    trimCache()
-    return true
-  }
-
-  function loadSelection(selection: Selection) {
-    if (selectionLoads.has(selection.key)) return
-    const files = new Set(selection.frames.map(({ file }) => file))
-    const missing = Array.from(files).filter(
-      (file) => !cache.has(file) && !loads.has(file)
-    ).length
-    if (loads.size + missing > loadLimit) return
-
-    selectionLoads.add(selection.key)
-    Promise.all(Array.from(files, textureForFrame))
-      .catch(fail)
-      .finally(() => selectionLoads.delete(selection.key))
-  }
-
-  function scheduleWarmup(selection: Selection) {
-    clearTimeout(warmTimer)
-    warmTimer = window.setTimeout(() => {
-      if (dragging || field.hidden) return
-      const { azimuth, elevation } = selection.nearest
-      const candidates = [
-        [elevation, azimuth],
-        [elevation, azimuth - 1],
-        [elevation, azimuth + 1],
-        [elevation - 1, azimuth],
-        [elevation + 1, azimuth],
-      ]
-      for (const [nextElevation, nextAzimuth] of candidates) {
-        const wrappedAzimuth = (nextAzimuth + 28) % 28
-        if (
-          nextElevation < 0 ||
-          nextElevation > 3 ||
-          (wrappedAzimuth > 7 && wrappedAzimuth < 21)
-        )
-          continue
-        const file = frameFile(nextElevation, wrappedAzimuth)
-        if (cache.has(file) || loads.has(file)) continue
-        if (loads.size >= loadLimit) break
-        textureForFrame(file).catch(fail)
-      }
-    }, 250)
+  async function load() {
+    const files = [
+      "mean",
+      ...Array.from(
+        { length: components },
+        (_, index) => `basis_${String(index).padStart(2, "0")}`
+      ),
+    ]
+    gl = canvas.getContext("webgl", {
+      alpha: true,
+      antialias: false,
+      depth: false,
+      desynchronized: true,
+      powerPreference: "high-performance",
+      premultipliedAlpha: false,
+      stencil: false,
+    })
+    if (!gl) throw new Error("WebGL rendering is unavailable")
+    initializeRenderer(gl)
+    await Promise.all(
+      files.map((file, unit) =>
+        loadImage(file).then((bitmap) => uploadTexture(unit, bitmap))
+      )
+    )
+    ready = true
+    requestRender()
   }
 
   function positionHandle() {
-    handle.style.left = `${clamp(
-      rect.left + point.x * rect.width,
-      handleRadius,
-      innerWidth - handleRadius
-    )}px`
-    handle.style.top = `${clamp(
-      rect.top + point.y * rect.height,
-      handleRadius,
-      innerHeight - handleRadius
-    )}px`
+    const light = lightPoint()
+    handle.style.left = `${rect.left + light.x * rect.width}px`
+    handle.style.top = `${rect.top + light.y * rect.height}px`
   }
 
   function render() {
     raf = 0
-    if (field.hidden) return
-    positionHandle()
-    target = frameSelection()
-    if (!ensureRenderer()) return
-    if (!draw(target)) loadSelection(target)
+    if (!gl || !ready || field.hidden) return
+    gl.uniform1fv(weightsUniform, lightWeights())
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+    canvas.hidden = false
+    poster.hidden = true
   }
 
   function requestRender() {
     if (!raf) raf = requestAnimationFrame(render)
   }
 
-  function requestRenderAfterFeedback() {
-    if (gl) requestRender()
-    else requestAnimationFrame(requestRender)
-  }
-
   function updatePoint(nextPoint: Point) {
     point = nextPoint
     positionHandle()
-    requestRenderAfterFeedback()
+    requestRender()
   }
 
   function moveLight(clientX: number, clientY: number) {
@@ -365,27 +272,14 @@
     })
   }
 
-  function prewarm() {
-    void poster
-      .decode()
-      .catch(() => undefined)
-      .then(() => {
-        if (field.hidden || dragging || !ensureRenderer()) return
-        target = frameSelection()
-        if (!draw(target)) loadSelection(target)
-        scheduleWarmup(target)
-      })
-  }
-
   field.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return
-    clearTimeout(warmTimer)
-    dragging = true
     const fromHandle = event.target === handle
+    const light = lightPoint()
     dragOffset = fromHandle
       ? {
-          x: rect.left + point.x * rect.width - event.clientX,
-          y: rect.top + point.y * rect.height - event.clientY,
+          x: rect.left + light.x * rect.width - event.clientX,
+          y: rect.top + light.y * rect.height - event.clientY,
         }
       : { x: 0, y: 0 }
     field.setPointerCapture(event.pointerId)
@@ -396,13 +290,6 @@
   field.addEventListener("pointermove", (event) => {
     if (!field.hasPointerCapture(event.pointerId)) return
     moveLight(event.clientX + dragOffset.x, event.clientY + dragOffset.y)
-  })
-  field.addEventListener("lostpointercapture", () => {
-    dragging = false
-    const selection = frameSelection()
-    target = selection
-    requestRender()
-    scheduleWarmup(selection)
   })
   handle.addEventListener("keydown", (event) => {
     const delta = (
@@ -415,7 +302,8 @@
     )[event.key]
     if (!delta) return
 
-    updatePoint({ x: point.x + delta[0], y: point.y + delta[1] })
+    const light = lightPoint()
+    updatePoint({ x: light.x + delta[0], y: light.y + delta[1] })
     event.preventDefault()
   })
 
@@ -430,14 +318,14 @@
       canvas.width = width
       canvas.height = height
       gl?.viewport(0, 0, width, height)
-      if (gl && !canvas.hidden) requestRender()
     }
     positionHandle()
+    requestRender()
   }
 
   window.addEventListener("resize", resize)
   window.visualViewport?.addEventListener("resize", resize)
   field.hidden = false
   resize()
-  prewarm()
+  load().catch(fail)
 })()
