@@ -22,7 +22,17 @@ import portraitWeights from "./portrait-light-field-weights.json"
 
   type Point = { x: number; y: number }
 
-  const defaultPoint = { x: 0.265, y: -0.586 }
+  // Light positions are in portrait coordinates (0-1 across the width and
+  // height). Measured from the frames: azimuths 1-7 light the face from the
+  // viewer's left, 21-27 from the right, and elevation 2 is face level. The
+  // light turns fully to the side a quarter portrait width from the face
+  // center and moves one elevation step per quarter width vertically.
+  const face = { x: 0.479, y: 0.292 }
+  const sideReach = 0.25
+  const elevationStep = 0.25
+  const aspect = 466 / 720
+  // Azimuth 6, elevation 2: a side light beside the head at face level.
+  const defaultPoint = { x: face.x - (sideReach * 6) / 7, y: face.y }
   const highResolution =
     poster.getBoundingClientRect().width * window.devicePixelRatio > 720
   const tier = highResolution ? "high" : "standard"
@@ -30,7 +40,7 @@ import portraitWeights from "./portrait-light-field-weights.json"
   const frameWeights: Record<string, number[]> = portraitWeights[tier]
   const components = frameWeights[frameName(0, 0)].length
   const sourceWidth = highResolution ? 1440 : 720
-  const sourceHeight = (sourceWidth * 466) / 720
+  const sourceHeight = sourceWidth * aspect
   const handleRadius = 19
   let point: Point = { ...defaultPoint }
   let rect: DOMRect
@@ -66,9 +76,11 @@ import portraitWeights from "./portrait-light-field-weights.json"
   // Bilinear blend of the basis weights of the four frames around the light.
   function lightWeights() {
     const light = lightPoint()
-    const signedAzimuth = -Math.tanh((light.x - defaultPoint.x) * 3) * 7
+    const right = clamp((light.x - face.x) / sideReach, -1, 1)
+    const down = ((light.y - face.y) * aspect) / elevationStep
+    const signedAzimuth = -7 * right
     const azimuth = signedAzimuth < 0 ? signedAzimuth + 28 : signedAzimuth
-    const elevation = clamp(2 - (light.y - defaultPoint.y) * 2.315, 0, 3)
+    const elevation = clamp(2 - down, 0, 3)
     const azimuth0 = Math.floor(azimuth) % 28
     const elevation0 = Math.floor(elevation)
     const azimuthWeight = azimuth - Math.floor(azimuth)

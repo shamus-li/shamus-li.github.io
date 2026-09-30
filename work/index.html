@@ -11,6 +11,9 @@
         <link rel="canonical" href="https://shamus.li/work/">
         <link rel="stylesheet" href="/styles.css">
         <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png">
+        <script type="speculationrules">
+            {"prerender": [{"where": {"href_matches": "/"}, "eagerness": "moderate"}]}
+        </script>
     </head>
     <body class="work-page">
         <div id="header">
@@ -25,7 +28,7 @@
             <section class="publication-list" aria-label="Selected publications and presentations">
                 <article class="publication">
                     <a class="publication-image" href="/lightfield-gaussian-splatting/" aria-label="Sparse Light Field Sampling project page">
-                        <img src="/work/lightfield.webp" width="1000" height="1000"
+                        <img src="/work/lightfield.webp" width="480" height="480" decoding="sync"
                             alt="Monocular and light-field reconstructions of the same toy excavator">
                     </a>
                     <div class="publication-details">
@@ -46,14 +49,14 @@
                 </article>
                 <article class="publication">
                     <a class="publication-image" href="https://cassandra-t-ye.github.io/projects/QUTCC/" aria-label="QUTCC project page">
-                        <img src="/work/qutcc.webp" width="1000" height="1000" loading="lazy"
+                        <img src="/work/qutcc.webp" width="480" height="480" decoding="sync"
                             alt="QUTCC pixel-wise uncertainty map for an MRI reconstruction">
                     </a>
                     <div class="publication-details">
                         <h2><a href="https://cassandra-t-ye.github.io/projects/QUTCC/">QUTCC: Quantile Uncertainty Training and Conformal Calibration for Imaging Inverse Problems</a></h2>
                         <p class="publication-authors">Cassandra Tong Ye, <strong>Shamus Li</strong>, Tyler King, Kristina Monakhova</p>
                         <div class="publication-venues">
-                            <p>arXiv preprint (2507.14760)</p>
+                            <p>NeurIPS 2026</p>
                             <p>CVPR 2025 UNCV Workshop, Spotlight Presentation</p>
                             <p>ICCP 2025 and 2026, Spotlight Posters</p>
                         </div>

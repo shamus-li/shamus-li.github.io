@@ -16,7 +16,8 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[1]
 RESOURCES = HERE / "resources"
 OUTPUT = REPO_ROOT / "public" / "work"
-SIZE = 1000
+# Three times the 160 px thumbnail width, for high-density phone screens.
+SIZE = 480
 DIVIDER = (210, 213, 220)
 
 
@@ -41,8 +42,8 @@ def split_figure(
         right = square(right_source.crop(right_crop) if right_crop else right_source)
 
     # A slightly diagonal split keeps the pair readable without adding labels.
-    top_x = 430
-    bottom_x = 520
+    top_x = round(SIZE * 0.43)
+    bottom_x = round(SIZE * 0.52)
     mask = Image.new("L", (SIZE, SIZE), 0)
     ImageDraw.Draw(mask).polygon(
         [(0, 0), (top_x, 0), (bottom_x, SIZE), (0, SIZE)],
@@ -54,7 +55,7 @@ def split_figure(
     ImageDraw.Draw(figure).line(
         [(top_x, 0), (bottom_x, SIZE)],
         fill=DIVIDER,
-        width=4,
+        width=round(SIZE * 0.004),
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

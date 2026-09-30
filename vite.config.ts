@@ -13,6 +13,8 @@ export default defineConfig({
     alias: { "@": redirectsSource },
   },
   build: {
+    // Every supported browser has native module preloading.
+    modulePreload: { polyfill: false },
     rollupOptions: {
       input: {
         main: path.join(repoRoot, "index.html"),
