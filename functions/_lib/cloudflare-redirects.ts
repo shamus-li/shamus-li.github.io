@@ -1,6 +1,7 @@
 import {
   canonicalSource,
-  parseRedirects,
+  isRecord,
+  parseRedirect,
   type Redirect,
 } from "../../redirects/redirect.ts"
 
@@ -10,7 +11,7 @@ export type RedirectEnv = {
   CLOUDFLARE_ACCOUNT_ID?: string
   CLOUDFLARE_API_TOKEN?: string
   REDIRECT_HOSTNAME?: string
-  REDIRECT_LIST_NAME?: string
+  REDIRECT_LIST_ID?: string
 }
 
 type Credentials = {
@@ -23,17 +24,9 @@ type Config = Credentials & {
   listId: string
 }
 
-type CloudflareWriteItem = {
-  redirect: {
-    source_url: string
-    target_url: string
-    status_code?: number
-    preserve_query_string: boolean
-    preserve_path_suffix: boolean
-    subpath_matching: boolean
-    include_subdomains: boolean
-  }
-  comment?: string
+type ManagedItem = {
+  id: string
+  redirect: Redirect
 }
 
 export class HttpError extends Error {
@@ -46,13 +39,10 @@ export class HttpError extends Error {
 }
 
 export async function listRedirects(env: RedirectEnv): Promise<Redirect[]> {
-  const config = await configFor(env)
+  const config = configFor(env)
   const redirects = new Map<string, Redirect>()
 
-  for (const item of await readListItems(config)) {
-    if (!isManagedItem(item, config.hostname)) continue
-
-    const redirect = redirectFromItem(item, config.hostname)
+  for (const { redirect } of await readManagedItems(config)) {
     const existing = redirects.get(redirect.source)
     if (
       existing &&
@@ -70,74 +60,62 @@ export async function listRedirects(env: RedirectEnv): Promise<Redirect[]> {
   return [...redirects.values()]
 }
 
-export async function replaceRedirects(
+// Adding list items replaces items with the same source URL, so this creates
+// or overwrites one redirect without touching the rest of the list.
+export async function saveRedirect(
   env: RedirectEnv,
-  redirects: Redirect[]
+  redirect: Redirect
 ): Promise<void> {
-  const config = await configFor(env)
-  const existingItems = await readListItems(config)
-  const unmanagedItems = existingItems
-    .filter((item) => !isManagedItem(item, config.hostname))
-    .map(itemForWrite)
-  const managedItems = redirects.flatMap((redirect) =>
-    sourceVariants(redirect.source).map((source) =>
-      itemFromRedirect({ ...redirect, source }, config.hostname)
-    )
-  )
-  const { result } = await cloudflareRequest(
+  const config = configFor(env)
+  const sources =
+    redirect.source === "/" ? ["/"] : [redirect.source, `${redirect.source}/`]
+  await runOperation(
     config,
-    `/rules/lists/${config.listId}/items`,
-    { method: "PUT", body: [...unmanagedItems, ...managedItems] }
+    "POST",
+    sources.map((source) => ({
+      redirect: {
+        source_url: `${config.hostname}${source}`,
+        target_url: redirect.destination,
+        status_code: redirect.code,
+        preserve_query_string: false,
+        preserve_path_suffix: false,
+        subpath_matching: false,
+        include_subdomains: false,
+      },
+    }))
   )
-
-  if (
-    !isRecord(result) ||
-    typeof result.operation_id !== "string" ||
-    !result.operation_id
-  ) {
-    throw new HttpError(
-      "Cloudflare redirect update did not return an operation_id",
-      502
-    )
-  }
-  await waitForOperation(config, result.operation_id)
 }
 
-async function configFor(env: RedirectEnv): Promise<Config> {
+export async function deleteRedirect(
+  env: RedirectEnv,
+  source: string
+): Promise<void> {
+  const config = configFor(env)
+  const canonical = canonicalSource(source)
+  const items = (await readManagedItems(config)).filter(
+    (item) => item.redirect.source === canonical
+  )
+  if (!items.length) {
+    throw new HttpError(`No redirect exists for ${canonical}`, 404)
+  }
+  await runOperation(config, "DELETE", {
+    items: items.map(({ id }) => ({ id })),
+  })
+}
+
+function configFor(env: RedirectEnv): Config {
   const accountId = required(env.CLOUDFLARE_ACCOUNT_ID, "CLOUDFLARE_ACCOUNT_ID")
   const token = required(env.CLOUDFLARE_API_TOKEN, "CLOUDFLARE_API_TOKEN")
   const hostname = required(env.REDIRECT_HOSTNAME, "REDIRECT_HOSTNAME")
     .replace(/^https?:\/\//, "")
     .replace(/\/+$/, "")
-  const listName = required(env.REDIRECT_LIST_NAME, "REDIRECT_LIST_NAME")
-  const credentials = { accountId, token }
-  const { result } = await cloudflareRequest(credentials, "/rules/lists")
-
-  if (!Array.isArray(result)) {
-    throw new HttpError(
-      "Cloudflare returned an invalid redirect-list response",
-      502
-    )
-  }
-  const list = result.find(
-    (value) =>
-      isRecord(value) &&
-      value.kind === "redirect" &&
-      value.name === listName &&
-      typeof value.id === "string"
-  )
-  if (!isRecord(list) || typeof list.id !== "string") {
-    throw new HttpError(
-      `Cloudflare Bulk Redirect List "${listName}" was not found`,
-      500
-    )
-  }
-
-  return { ...credentials, hostname, listId: list.id }
+  const listId = required(env.REDIRECT_LIST_ID, "REDIRECT_LIST_ID")
+  return { accountId, token, hostname, listId }
 }
 
-async function readListItems(config: Config): Promise<unknown[]> {
-  const items: unknown[] = []
+// Items for other hostnames share the list and are skipped.
+async function readManagedItems(config: Config): Promise<ManagedItem[]> {
+  const managed: ManagedItem[] = []
   let cursor = ""
 
   do {
@@ -153,30 +131,91 @@ async function readListItems(config: Config): Promise<unknown[]> {
         502
       )
     }
-    items.push(...result)
-    cursor = cursorAfter(resultInfo)
+    for (const item of result) {
+      const redirect =
+        isRecord(item) && isRecord(item.redirect) ? item.redirect : null
+      const source =
+        typeof redirect?.source_url === "string"
+          ? managedSource(redirect.source_url, config.hostname)
+          : null
+      if (!redirect || source === null) continue
+      if (typeof item.id !== "string") {
+        throw new HttpError("Cloudflare returned a redirect item without an id", 502)
+      }
+      try {
+        managed.push({
+          id: item.id,
+          redirect: parseRedirect({
+            source,
+            destination: redirect.target_url,
+            code: redirect.status_code ?? 301,
+          }),
+        })
+      } catch (error) {
+        throw new HttpError(
+          error instanceof Error
+            ? error.message
+            : "Cloudflare returned an invalid redirect item",
+          502
+        )
+      }
+    }
+    cursor =
+      isRecord(resultInfo) &&
+      isRecord(resultInfo.cursors) &&
+      typeof resultInfo.cursors.after === "string"
+        ? resultInfo.cursors.after
+        : ""
   } while (cursor)
 
-  return items
+  return managed
 }
 
-async function waitForOperation(config: Config, operationId: string) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const { result } = await cloudflareRequest(
-      config,
-      `/rules/lists/bulk_operations/${operationId}`
+function managedSource(sourceUrl: string, hostname: string) {
+  const withoutScheme = sourceUrl.replace(/^https?:\/\//, "")
+  if (withoutScheme === hostname) return "/"
+  return withoutScheme.startsWith(`${hostname}/`)
+    ? withoutScheme.slice(hostname.length)
+    : null
+}
+
+async function runOperation(
+  config: Config,
+  method: "POST" | "DELETE",
+  body: unknown
+) {
+  const { result } = await cloudflareRequest(
+    config,
+    `/rules/lists/${config.listId}/items`,
+    { method, body }
+  )
+  if (
+    !isRecord(result) ||
+    typeof result.operation_id !== "string" ||
+    !result.operation_id
+  ) {
+    throw new HttpError(
+      "Cloudflare redirect update did not return an operation_id",
+      502
     )
-    if (!isRecord(result)) {
+  }
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const { result: operation } = await cloudflareRequest(
+      config,
+      `/rules/lists/bulk_operations/${result.operation_id}`
+    )
+    if (!isRecord(operation)) {
       throw new HttpError(
         "Cloudflare returned an invalid bulk-operation response",
         502
       )
     }
-    if (result.status === "completed") return
-    if (result.status === "failed") {
+    if (operation.status === "completed") return
+    if (operation.status === "failed") {
       throw new HttpError(
-        typeof result.error === "string"
-          ? result.error
+        typeof operation.error === "string"
+          ? operation.error
           : "Cloudflare redirect update failed",
         502
       )
@@ -190,7 +229,7 @@ async function waitForOperation(config: Config, operationId: string) {
 async function cloudflareRequest(
   config: Credentials,
   path: string,
-  options: { method?: "GET" | "PUT"; body?: CloudflareWriteItem[] } = {}
+  options: { method?: "GET" | "POST" | "DELETE"; body?: unknown } = {}
 ) {
   const response = await fetch(
     `${API_BASE}/accounts/${config.accountId}${path}`,
@@ -223,120 +262,6 @@ async function cloudflareRequest(
   return { result: data.result, resultInfo: data.result_info }
 }
 
-function redirectFromItem(item: unknown, hostname: string): Redirect {
-  const redirect = redirectRecord(item)
-  if (
-    !redirect ||
-    typeof redirect.source_url !== "string" ||
-    typeof redirect.target_url !== "string"
-  ) {
-    throw new HttpError("Cloudflare returned an invalid redirect item", 502)
-  }
-
-  try {
-    return parseRedirects([
-      {
-        source: pathFromSourceUrl(redirect.source_url, hostname),
-        destination: redirect.target_url,
-        code: redirect.status_code ?? 301,
-      },
-    ])[0]!
-  } catch (error) {
-    throw new HttpError(
-      error instanceof Error
-        ? error.message
-        : "Cloudflare returned an invalid redirect item",
-      502
-    )
-  }
-}
-
-function itemForWrite(item: unknown): CloudflareWriteItem {
-  const value = isRecord(item) ? item : null
-  const redirect = redirectRecord(item)
-  if (
-    !value ||
-    !redirect ||
-    typeof redirect.source_url !== "string" ||
-    typeof redirect.target_url !== "string"
-  ) {
-    throw new HttpError(
-      "Cloudflare returned an invalid unmanaged redirect item",
-      502
-    )
-  }
-  const statusCode = redirect.status_code
-  if (
-    statusCode !== undefined &&
-    (typeof statusCode !== "number" ||
-      ![301, 302, 307, 308].includes(statusCode))
-  ) {
-    throw new HttpError(
-      "Cloudflare returned an invalid unmanaged redirect status code",
-      502
-    )
-  }
-
-  return {
-    redirect: {
-      source_url: redirect.source_url,
-      target_url: redirect.target_url,
-      ...(typeof statusCode === "number" ? { status_code: statusCode } : {}),
-      preserve_query_string: redirect.preserve_query_string === true,
-      preserve_path_suffix: redirect.preserve_path_suffix === true,
-      subpath_matching: redirect.subpath_matching === true,
-      include_subdomains: redirect.include_subdomains === true,
-    },
-    ...(typeof value.comment === "string" ? { comment: value.comment } : {}),
-  }
-}
-
-function itemFromRedirect(
-  redirect: Redirect,
-  hostname: string
-): CloudflareWriteItem {
-  return {
-    redirect: {
-      source_url: `${hostname}${redirect.source}`,
-      target_url: redirect.destination,
-      status_code: redirect.code,
-      preserve_query_string: false,
-      preserve_path_suffix: false,
-      subpath_matching: false,
-      include_subdomains: false,
-    },
-  }
-}
-
-function sourceVariants(source: string) {
-  const canonical = canonicalSource(source)
-  return canonical === "/" ? [canonical] : [canonical, `${canonical}/`]
-}
-
-function pathFromSourceUrl(sourceUrl: string, hostname: string) {
-  const withoutScheme = sourceUrl.replace(/^https?:\/\//, "")
-  if (withoutScheme === hostname) return "/"
-  return withoutScheme.startsWith(`${hostname}/`)
-    ? `/${withoutScheme.slice(hostname.length + 1)}`
-    : `/${withoutScheme.replace(/^\/+/, "")}`
-}
-
-function isManagedItem(item: unknown, hostname: string) {
-  const redirect = redirectRecord(item)
-  if (!redirect || typeof redirect.source_url !== "string") return false
-  const withoutScheme = redirect.source_url.replace(/^https?:\/\//, "")
-  return withoutScheme === hostname || withoutScheme.startsWith(`${hostname}/`)
-}
-
-function redirectRecord(item: unknown): Record<string, unknown> | null {
-  return isRecord(item) && isRecord(item.redirect) ? item.redirect : null
-}
-
-function cursorAfter(value: unknown) {
-  if (!isRecord(value) || !isRecord(value.cursors)) return ""
-  return typeof value.cursors.after === "string" ? value.cursors.after : ""
-}
-
 function cloudflareError(data: Record<string, unknown>) {
   if (!Array.isArray(data.errors)) return ""
   return data.errors
@@ -352,8 +277,4 @@ function required(value: unknown, name: string): string {
     throw new HttpError(`${name} is not configured`, 500)
   }
   return value
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }

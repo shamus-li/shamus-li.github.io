@@ -5,6 +5,6 @@ The protected React dashboard at `/redirects/` and its exact Pages Function at
 Cloudflare slash variants are expanded and collapsed only by the server adapter.
 
 Run development, tests, type checking, linting, and builds from the repository
-root. The Function currently preserves entries outside `REDIRECT_HOSTNAME` in
-the configured shared `REDIRECT_LIST_NAME`; moving these redirects to a
-dedicated list remains an infrastructure migration.
+root. The Function adds and deletes only its own entries in the Bulk Redirect
+List `REDIRECT_LIST_ID`, so entries outside `REDIRECT_HOSTNAME` in that shared
+list are left untouched.

@@ -1,8 +1,9 @@
-import { parseRedirects } from "../../redirects/redirect.ts"
+import { isRecord, parseRedirect } from "../../redirects/redirect.ts"
 import {
+  deleteRedirect,
   HttpError,
   listRedirects,
-  replaceRedirects,
+  saveRedirect,
   type RedirectEnv,
 } from "../_lib/cloudflare-redirects.ts"
 
@@ -15,31 +16,41 @@ export function onRequestGet({ env }: Context) {
   return respond(async () => json(await listRedirects(env)))
 }
 
-export function onRequestPut({ request, env }: Context) {
+export function onRequestPost({ request, env }: Context) {
   return respond(async () => {
-    let body: unknown
+    const body = await readJson(request)
+    let redirect
     try {
-      body = await request.json()
-    } catch {
-      throw new HttpError("Request body must be valid JSON", 400)
-    }
-
-    let redirects
-    try {
-      redirects = parseRedirects(isRecord(body) ? body.redirects : undefined)
+      redirect = parseRedirect(body)
     } catch (error) {
       throw new HttpError(
-        error instanceof Error ? error.message : "Invalid redirects",
+        error instanceof Error ? error.message : "Invalid redirect",
         400
       )
     }
-    await replaceRedirects(env, redirects)
-
-    return new Response(null, {
-      status: 204,
-      headers: { "cache-control": "no-store" },
-    })
+    await saveRedirect(env, redirect)
+    return noContent()
   })
+}
+
+export function onRequestDelete({ request, env }: Context) {
+  return respond(async () => {
+    const body = await readJson(request)
+    const source = isRecord(body) ? body.source : undefined
+    if (typeof source !== "string" || !source.trim().startsWith("/")) {
+      throw new HttpError("Redirect sources must start with /", 400)
+    }
+    await deleteRedirect(env, source)
+    return noContent()
+  })
+}
+
+async function readJson(request: Request): Promise<unknown> {
+  try {
+    return await request.json()
+  } catch {
+    throw new HttpError("Request body must be valid JSON", 400)
+  }
 }
 
 async function respond(action: () => Promise<Response>) {
@@ -53,6 +64,13 @@ async function respond(action: () => Promise<Response>) {
   }
 }
 
+function noContent() {
+  return new Response(null, {
+    status: 204,
+    headers: { "cache-control": "no-store" },
+  })
+}
+
 function json(data: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(data), {
     ...init,
@@ -62,8 +80,4 @@ function json(data: unknown, init: ResponseInit = {}) {
       ...init.headers,
     },
   })
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }

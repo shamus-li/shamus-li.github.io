@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react"
 import {
+  CircleAlertIcon,
   ExternalLinkIcon,
   LogOutIcon,
   PlusIcon,
-  ShieldCheckIcon,
   Trash2Icon,
 } from "lucide-react"
 import { Toaster, toast } from "sonner"
@@ -13,9 +13,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card"
 import { Input } from "./components/ui/input"
 import {
   canonicalSource,
+  parseRedirect,
   parseRedirects,
   type Redirect,
-  type RedirectCode,
 } from "../redirect"
 
 function errorMessage(value: unknown, fallback: string) {
@@ -53,21 +53,18 @@ function App() {
   const [loadError, setLoadError] = useState("")
   const [saving, setSaving] = useState(false)
 
-  async function persist(nextRedirects: Redirect[]) {
-    if (!redirects || saving) return false
-
-    const previousRedirects = redirects
-    setRedirects(nextRedirects)
+  // Sends one change, then reloads so edits made elsewhere also show up.
+  async function mutate(method: "POST" | "DELETE", body: unknown) {
     setSaving(true)
     try {
       await request({
-        method: "PUT",
+        method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ redirects: nextRedirects }),
+        body: JSON.stringify(body),
       })
+      setRedirects(parseRedirects(await request()))
       return true
     } catch (error) {
-      setRedirects(previousRedirects)
       toast.error(
         error instanceof Error ? error.message : "Could not update redirects"
       )
@@ -88,34 +85,33 @@ function App() {
       toast.error("Source is required")
       return
     }
-    const source = canonicalSource(rawSource)
-    const destination = String(data.get("destination") ?? "").trim()
-    const code: RedirectCode = data.get("code") === "302" ? 302 : 301
-
-    let validDestination = false
+    let redirect: Redirect
     try {
-      validDestination = ["http:", "https:"].includes(
-        new URL(destination).protocol
-      )
-    } catch {
-      // Invalid URLs are handled below.
-    }
-    if (!validDestination) {
-      toast.error("Destination must be an absolute HTTP(S) URL")
+      redirect = parseRedirect({
+        source: canonicalSource(rawSource),
+        destination: data.get("destination"),
+        code: Number(data.get("code")),
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Invalid redirect")
       return
     }
 
-    const nextRule = { source, destination, code }
-    const nextRedirects = redirects.some((rule) => rule.source === source)
-      ? redirects.map((rule) => (rule.source === source ? nextRule : rule))
-      : [...redirects, nextRule]
+    const existing = redirects.find((rule) => rule.source === redirect.source)
+    if (
+      existing &&
+      !window.confirm(
+        `Replace the redirect for ${existing.source}? It currently goes to ${existing.destination}.`
+      )
+    )
+      return
 
-    if (await persist(nextRedirects)) form.reset()
+    if (await mutate("POST", redirect)) form.reset()
   }
 
   function removeRedirect(source: string) {
-    if (!redirects) return
-    void persist(redirects.filter((rule) => rule.source !== source))
+    if (saving || !window.confirm(`Delete the redirect for ${source}?`)) return
+    void mutate("DELETE", { source })
   }
 
   useEffect(() => {
@@ -151,7 +147,7 @@ function App() {
               className="grid w-full grid-cols-[auto_1fr] gap-x-2 rounded-lg border bg-card px-2.5 py-2 text-left text-sm text-card-foreground"
               role="alert"
             >
-              <ShieldCheckIcon className="row-span-2 mt-0.5 size-4" />
+              <CircleAlertIcon className="row-span-2 mt-0.5 size-4" />
               <div className="font-medium">Redirects unavailable</div>
               <div className="text-sm text-balance text-muted-foreground md:text-pretty">
                 {loadError}

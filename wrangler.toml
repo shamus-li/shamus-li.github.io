@@ -5,4 +5,5 @@ pages_build_output_dir = "dist"
 [vars]
 CLOUDFLARE_ACCOUNT_ID = "2f56e0cba9c55090b02f5948da4ff347"
 REDIRECT_HOSTNAME = "shamus.li"
-REDIRECT_LIST_NAME = "pages_to_custom_domain"
+# Bulk Redirect List "pages_to_custom_domain"
+REDIRECT_LIST_ID = "05a8bebf6ba949d8b8895cea6face879"
