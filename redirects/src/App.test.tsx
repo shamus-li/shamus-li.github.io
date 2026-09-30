@@ -34,7 +34,7 @@ function mockApi(
           ? json({ error: "Access denied" }, { status: getStatus })
           : json(stored)
       }
-      const body: unknown = JSON.parse(String(init?.body))
+      const body = JSON.parse(String(init?.body))
       mutations.push({ method, body })
       if (mutationStatus >= 400) {
         return json(
@@ -42,9 +42,15 @@ function mockApi(
           { status: mutationStatus }
         )
       }
-      const redirect = body as Redirect
-      stored = stored.filter((rule) => rule.source !== redirect.source)
-      if (method === "POST") stored.push(redirect)
+      if (method === "POST") stored.push(body)
+      if (method === "PUT") {
+        stored = stored.map((rule) =>
+          rule.source === body.source ? body.redirect : rule
+        )
+      }
+      if (method === "DELETE") {
+        stored = stored.filter((rule) => rule.source !== body.source)
+      }
       return new Response(null, { status: 204 })
     })
   )
@@ -62,31 +68,45 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-async function fillForm(source: string, destination: string) {
+const papers: Redirect = {
+  source: "/papers",
+  destination: "https://example.com/papers",
+  code: 301,
+}
+
+async function startNew() {
   const user = userEvent.setup()
-  await user.type(screen.getByLabelText("Source"), source)
-  await user.type(screen.getByLabelText("Destination"), destination)
-  await user.click(screen.getByRole("button", { name: "Add" }))
+  await user.click(await screen.findByRole("button", { name: "New redirect" }))
+  return user
+}
+
+async function fill(source: string, destination: string) {
+  const user = userEvent.setup()
+  const sourceInput = screen.getByLabelText("Source")
+  const destinationInput = screen.getByLabelText("Destination")
+  await user.clear(sourceInput)
+  await user.type(sourceInput, source)
+  await user.clear(destinationInput)
+  await user.type(destinationInput, destination)
+  return user
 }
 
 describe("App", () => {
-  it("renders immediately but disables mutations until redirects load", async () => {
-    const user = userEvent.setup()
+  it("disables new redirects until the list loads", async () => {
     const initialGet = deferred<Response>()
-    const fetch = vi.fn(async () => initialGet.promise)
-    vi.stubGlobal("fetch", fetch)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => initialGet.promise)
+    )
 
     render(<App />)
 
-    expect(screen.getByText("Redirects")).not.toBeNull()
-    expect(screen.getByText("Loading…")).not.toBeNull()
-    const add = screen.getByRole("button", { name: "Add" }) as HTMLButtonElement
+    const add = screen.getByRole("button", { name: "New redirect" })
     expect(add.matches(":disabled")).toBe(true)
-    await user.click(add)
-    expect(fetch).toHaveBeenCalledTimes(1)
 
     initialGet.resolve(json([]))
     await waitFor(() => expect(add.matches(":disabled")).toBe(false))
+    expect(screen.getByText("No redirects yet")).not.toBeNull()
   })
 
   it("shows an accessible initial-load error", async () => {
@@ -99,150 +119,159 @@ describe("App", () => {
     expect(screen.getByText("Access denied")).not.toBeNull()
   })
 
-  it("loads canonical redirects with their status codes and links", async () => {
-    mockApi([
-      {
-        source: "/external",
-        destination: "https://example.com/external",
-        code: 302,
-      },
-    ])
+  it("lists redirects with their codes and destination links", async () => {
+    mockApi([{ ...papers, code: 302 }])
 
     render(<App />)
 
-    expect(await screen.findByText("/external")).not.toBeNull()
-    expect(screen.getByText("302")).not.toBeNull()
-    const link = screen.getByRole("link", {
-      name: "https://example.com/external",
-    })
-    expect(link.getAttribute("href")).toBe("https://example.com/external")
+    expect(await screen.findByText("/papers")).not.toBeNull()
+    expect(screen.getAllByText("302").length).toBeGreaterThan(0)
+    const link = screen.getByRole("link", { name: papers.destination })
+    expect(link.getAttribute("href")).toBe(papers.destination)
     expect(link.getAttribute("target")).toBe("_blank")
     expect(link.getAttribute("rel")).toBe("noreferrer")
   })
 
-  it("saves one canonical redirect and resets the form", async () => {
-    const user = userEvent.setup()
+  it("creates a redirect from a new row in the list", async () => {
     const { mutations } = mockApi([])
 
     render(<App />)
-    await screen.findByText("0 total")
-    const source = screen.getByLabelText("Source") as HTMLInputElement
-    const destination = screen.getByLabelText("Destination") as HTMLInputElement
-    const code = screen.getByLabelText("Code") as HTMLSelectElement
-    await user.type(source, "papers///")
-    await user.type(destination, "https://example.com/papers")
-    await user.selectOptions(code, "302")
-    await user.click(screen.getByRole("button", { name: "Add" }))
+    await startNew()
+    const user = await fill("papers///", papers.destination)
+    await user.click(screen.getByRole("combobox", { name: "Code" }))
+    await user.click(await screen.findByRole("option", { name: "302 Temporary" }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
 
     expect(await screen.findByText("/papers")).not.toBeNull()
+    expect(screen.queryByLabelText("Source")).toBeNull()
+    expect(mutations).toEqual([
+      { method: "POST", body: { ...papers, code: 302 } },
+    ])
+  })
+
+  it("refuses to create a duplicate source", async () => {
+    const { mutations } = mockApi([papers])
+
+    render(<App />)
+    await startNew()
+    const user = await fill("papers/", "https://example.com/other")
+    await user.keyboard("{Enter}")
+
+    expect(
+      await screen.findByText("A redirect for /papers already exists")
+    ).not.toBeNull()
+    expect(mutations).toEqual([])
+    expect(
+      (screen.getByLabelText("Source") as HTMLInputElement).value
+    ).toBe("papers/")
+  })
+
+  it("edits a redirect inline", async () => {
+    const { mutations } = mockApi([papers])
+
+    render(<App />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole("button", { name: "Edit /papers" }))
+    expect(
+      (screen.getByLabelText("Source") as HTMLInputElement).value
+    ).toBe("/papers")
+    await fill("/papers", "https://example.com/new")
+    await user.keyboard("{Enter}")
+
+    expect(await screen.findByText("https://example.com/new")).not.toBeNull()
     expect(mutations).toEqual([
       {
-        method: "POST",
+        method: "PUT",
         body: {
           source: "/papers",
-          destination: "https://example.com/papers",
-          code: 302,
+          redirect: { ...papers, destination: "https://example.com/new" },
         },
       },
     ])
-    expect(source.value).toBe("")
-    expect(destination.value).toBe("")
-    expect(code.value).toBe("301")
+  })
+
+  it("refuses to rename a redirect onto another source", async () => {
+    const { mutations } = mockApi([
+      papers,
+      { source: "/taken", destination: "https://example.com/taken", code: 301 },
+    ])
+
+    render(<App />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole("button", { name: "Edit /papers" }))
+    await fill("/taken", papers.destination)
+    await user.keyboard("{Enter}")
+
+    expect(
+      await screen.findByText("A redirect for /taken already exists")
+    ).not.toBeNull()
+    expect(mutations).toEqual([])
+  })
+
+  it("cancels editing with Escape", async () => {
+    const { mutations } = mockApi([papers])
+
+    render(<App />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole("button", { name: "Edit /papers" }))
+    await user.type(screen.getByLabelText("Destination"), "/changed")
+    await user.keyboard("{Escape}")
+
+    expect(screen.queryByLabelText("Destination")).toBeNull()
+    expect(screen.getByText(papers.destination)).not.toBeNull()
+    expect(mutations).toEqual([])
+  })
+
+  it("deletes a redirect only after the inline confirmation", async () => {
+    const confirm = vi.spyOn(window, "confirm")
+    const { mutations } = mockApi([papers])
+
+    render(<App />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole("button", { name: "Remove /papers" }))
+    expect(mutations).toEqual([])
+
+    await user.click(
+      screen.getByRole("button", { name: "Confirm remove /papers" })
+    )
+
+    await waitFor(() => expect(screen.queryByText("/papers")).toBeNull())
+    expect(mutations).toEqual([
+      { method: "DELETE", body: { source: "/papers" } },
+    ])
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+  it("cancels the inline confirmation when focus leaves the button", async () => {
+    const { mutations } = mockApi([papers])
+
+    render(<App />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole("button", { name: "Remove /papers" }))
+    await user.tab()
+
+    expect(screen.getByRole("button", { name: "Remove /papers" })).not.toBeNull()
+    expect(mutations).toEqual([])
   })
 
   it("shows redirects changed elsewhere after saving", async () => {
     const api = mockApi([])
 
     render(<App />)
-    await screen.findByText("0 total")
+    await startNew()
     api.addElsewhere({
       source: "/elsewhere",
       destination: "https://example.com/elsewhere",
       code: 301,
     })
-    await fillForm("mine", "https://example.com/mine")
+    const user = await fill("mine", "https://example.com/mine")
+    await user.keyboard("{Enter}")
 
     expect(await screen.findByText("/elsewhere")).not.toBeNull()
     expect(screen.getByText("/mine")).not.toBeNull()
   })
 
-  it("asks before replacing an existing source", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true)
-    const { mutations } = mockApi([
-      { source: "/papers", destination: "https://example.com/old", code: 301 },
-    ])
-
-    render(<App />)
-    await screen.findByText("/papers")
-    await fillForm("papers/", "https://example.com/new")
-
-    await screen.findByText("https://example.com/new")
-    expect(confirm).toHaveBeenCalledWith(
-      "Replace the redirect for /papers? It currently goes to https://example.com/old."
-    )
-    expect(screen.getAllByText("/papers")).toHaveLength(1)
-    expect(mutations).toEqual([
-      {
-        method: "POST",
-        body: {
-          source: "/papers",
-          destination: "https://example.com/new",
-          code: 301,
-        },
-      },
-    ])
-  })
-
-  it("keeps the existing redirect and the form when replacing is cancelled", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false)
-    const { mutations } = mockApi([
-      { source: "/papers", destination: "https://example.com/old", code: 301 },
-    ])
-
-    render(<App />)
-    await screen.findByText("/papers")
-    await fillForm("papers", "https://example.com/new")
-
-    expect(mutations).toEqual([])
-    expect(screen.getByText("https://example.com/old")).not.toBeNull()
-    expect((screen.getByLabelText("Source") as HTMLInputElement).value).toBe(
-      "papers"
-    )
-  })
-
-  it("asks before deleting a redirect", async () => {
-    const user = userEvent.setup()
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true)
-    const { mutations } = mockApi([
-      { source: "/old", destination: "https://example.com/old", code: 301 },
-    ])
-
-    render(<App />)
-    await screen.findByText("/old")
-    await user.click(screen.getByRole("button", { name: "Remove" }))
-
-    await waitFor(() => expect(screen.queryByText("/old")).toBeNull())
-    expect(confirm).toHaveBeenCalledWith("Delete the redirect for /old?")
-    expect(mutations).toEqual([{ method: "DELETE", body: { source: "/old" } }])
-  })
-
-  it("keeps a redirect when deleting is cancelled", async () => {
-    const user = userEvent.setup()
-    vi.spyOn(window, "confirm").mockReturnValue(false)
-    const { mutations } = mockApi([
-      { source: "/old", destination: "https://example.com/old", code: 301 },
-    ])
-
-    render(<App />)
-    await screen.findByText("/old")
-    await user.click(screen.getByRole("button", { name: "Remove" }))
-
-    expect(mutations).toEqual([])
-    expect(screen.getByText("/old")).not.toBeNull()
-  })
-
-  it("locks all mutations while a save is in flight", async () => {
-    const user = userEvent.setup()
+  it("locks every action while a save is in flight", async () => {
     const pendingPost = deferred<Response>()
     const posts: unknown[] = []
     vi.stubGlobal(
@@ -252,70 +281,56 @@ describe("App", () => {
           posts.push(JSON.parse(String(init.body)))
           return pendingPost.promise
         }
-        return json([
-          { source: "/old", destination: "https://example.com/old", code: 301 },
-        ])
+        return json([papers])
       })
     )
 
     render(<App />)
-    await screen.findByText("/old")
-    await fillForm("pending", "https://example.com/pending")
+    await startNew()
+    const user = await fill("pending", "https://example.com/pending")
+    await user.keyboard("{Enter}")
 
-    const add = screen.getByRole("button", { name: "Add" }) as HTMLButtonElement
-    const remove = screen.getByRole("button", {
-      name: "Remove",
-    }) as HTMLButtonElement
-    expect(add.matches(":disabled")).toBe(true)
-    expect(remove.matches(":disabled")).toBe(true)
-    await user.click(remove)
+    const save = screen.getByRole("button", { name: "Save" })
+    const edit = screen.getByRole("button", { name: "Edit /papers" })
+    expect(save.matches(":disabled")).toBe(true)
+    expect(edit.matches(":disabled")).toBe(true)
+    await user.click(save)
     expect(posts).toHaveLength(1)
 
     pendingPost.resolve(new Response(null, { status: 204 }))
-    await waitFor(() => expect(add.matches(":disabled")).toBe(false))
+    await waitFor(() => expect(screen.queryByLabelText("Source")).toBeNull())
   })
 
-  it("keeps the list and the form when a save fails", async () => {
-    mockApi(
-      [{ source: "/old", destination: "https://example.com/old", code: 301 }],
-      { mutationStatus: 500 }
-    )
+  it("keeps the row open with its values when a save fails", async () => {
+    mockApi([papers], { mutationStatus: 500 })
 
     render(<App />)
-    await screen.findByText("/old")
-    await fillForm("broken", "https://example.com/broken")
+    await startNew()
+    const user = await fill("broken", "https://example.com/broken")
+    await user.keyboard("{Enter}")
 
     expect(await screen.findByText("Redirect update failed")).not.toBeNull()
-    expect(screen.queryByText("/broken")).toBeNull()
-    expect(screen.getByText("/old")).not.toBeNull()
-    expect((screen.getByLabelText("Source") as HTMLInputElement).value).toBe(
-      "broken"
-    )
-  })
-
-  it("rejects non-HTTP destinations without saving", async () => {
-    const { mutations } = mockApi([])
-
-    render(<App />)
-    await screen.findByText("0 total")
-    await fillForm("bad", "mailto:test@example.com")
-
     expect(
-      await screen.findByText(
-        "Redirect destinations must be absolute HTTP(S) URLs"
-      )
-    ).not.toBeNull()
-    expect(mutations).toEqual([])
+      (screen.getByLabelText("Source") as HTMLInputElement).value
+    ).toBe("broken")
+    expect(screen.queryByText("/broken")).toBeNull()
   })
 
-  it("rejects a whitespace-only source without saving", async () => {
-    const { mutations } = mockApi([])
+  it.each([
+    ["bad", "mailto:test@example.com", "Redirect destinations must be absolute HTTP(S) URLs"],
+    ["   ", "https://example.com/root", "Source is required"],
+  ])(
+    "rejects source %j and destination %j without saving",
+    async (source, destination, message) => {
+      const { mutations } = mockApi([])
 
-    render(<App />)
-    await screen.findByText("0 total")
-    await fillForm("   ", "https://example.com/root")
+      render(<App />)
+      await startNew()
+      const user = await fill(source, destination)
+      await user.keyboard("{Enter}")
 
-    expect(await screen.findByText("Source is required")).not.toBeNull()
-    expect(mutations).toEqual([])
-  })
+      expect(await screen.findByText(message)).not.toBeNull()
+      expect(mutations).toEqual([])
+    }
+  )
 })

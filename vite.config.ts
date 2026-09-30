@@ -5,9 +5,13 @@ import { defineConfig } from "vitest/config"
 
 const repoRoot = import.meta.dirname
 const redirectsRoot = path.join(repoRoot, "redirects")
+const redirectsSource = path.join(redirectsRoot, "src")
 
 export default defineConfig({
   plugins: [tailwindcss()],
+  resolve: {
+    alias: { "@": redirectsSource },
+  },
   build: {
     rollupOptions: {
       input: {
@@ -27,6 +31,7 @@ export default defineConfig({
         },
       },
       {
+        extends: true,
         test: {
           name: "redirects",
           include: ["redirects/src/**/*.test.{ts,tsx}"],

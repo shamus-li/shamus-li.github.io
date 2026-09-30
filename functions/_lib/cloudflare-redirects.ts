@@ -60,16 +60,63 @@ export async function listRedirects(env: RedirectEnv): Promise<Redirect[]> {
   return [...redirects.values()]
 }
 
-// Adding list items replaces items with the same source URL, so this creates
-// or overwrites one redirect without touching the rest of the list.
-export async function saveRedirect(
+export async function createRedirect(
   env: RedirectEnv,
   redirect: Redirect
 ): Promise<void> {
   const config = configFor(env)
+  const items = await readManagedItems(config)
+  rejectDuplicate(items, redirect.source)
+  await addItems(config, redirect)
+}
+
+export async function updateRedirect(
+  env: RedirectEnv,
+  source: string,
+  redirect: Redirect
+): Promise<void> {
+  const config = configFor(env)
+  const items = await readManagedItems(config)
+  const previous = itemsFor(items, source)
+  if (redirect.source !== canonicalSource(source)) {
+    rejectDuplicate(items, redirect.source)
+  }
+  // Adding list items replaces items with the same source URL. A renamed
+  // redirect is added before the old one is deleted, so a failure between the
+  // two steps never loses it.
+  await addItems(config, redirect)
+  if (redirect.source !== canonicalSource(source)) {
+    await deleteItems(config, previous)
+  }
+}
+
+export async function deleteRedirect(
+  env: RedirectEnv,
+  source: string
+): Promise<void> {
+  const config = configFor(env)
+  await deleteItems(config, itemsFor(await readManagedItems(config), source))
+}
+
+function itemsFor(items: ManagedItem[], source: string) {
+  const canonical = canonicalSource(source)
+  const matches = items.filter((item) => item.redirect.source === canonical)
+  if (!matches.length) {
+    throw new HttpError(`No redirect exists for ${canonical}`, 404)
+  }
+  return matches
+}
+
+function rejectDuplicate(items: ManagedItem[], source: string) {
+  if (items.some((item) => item.redirect.source === source)) {
+    throw new HttpError(`A redirect for ${source} already exists`, 409)
+  }
+}
+
+function addItems(config: Config, redirect: Redirect) {
   const sources =
     redirect.source === "/" ? ["/"] : [redirect.source, `${redirect.source}/`]
-  await runOperation(
+  return runOperation(
     config,
     "POST",
     sources.map((source) => ({
@@ -86,19 +133,8 @@ export async function saveRedirect(
   )
 }
 
-export async function deleteRedirect(
-  env: RedirectEnv,
-  source: string
-): Promise<void> {
-  const config = configFor(env)
-  const canonical = canonicalSource(source)
-  const items = (await readManagedItems(config)).filter(
-    (item) => item.redirect.source === canonical
-  )
-  if (!items.length) {
-    throw new HttpError(`No redirect exists for ${canonical}`, 404)
-  }
-  await runOperation(config, "DELETE", {
+function deleteItems(config: Config, items: ManagedItem[]) {
+  return runOperation(config, "DELETE", {
     items: items.map(({ id }) => ({ id })),
   })
 }

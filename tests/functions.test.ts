@@ -4,11 +4,13 @@ import {
   onRequestDelete,
   onRequestGet,
   onRequestPost,
+  onRequestPut,
 } from "../functions/redirects/api.ts"
 import {
   deleteRedirect,
   listRedirects,
-  saveRedirect,
+  createRedirect,
+  updateRedirect,
   type RedirectEnv,
 } from "../functions/_lib/cloudflare-redirects.ts"
 
@@ -141,6 +143,21 @@ function json(body: unknown, status = 200) {
   })
 }
 
+function storedItem(id: string, path: string) {
+  return {
+    id,
+    redirect: {
+      source_url: `shamus.li${path}`,
+      target_url: "https://example.com/old",
+      status_code: 301,
+    },
+  }
+}
+
+function writes(calls: Call[]) {
+  return calls.filter((call) => call.method !== "GET")
+}
+
 afterEach(() => vi.unstubAllGlobals())
 
 describe("Cloudflare redirect storage", () => {
@@ -259,18 +276,16 @@ describe("Cloudflare redirect storage", () => {
     ).toEqual(["per_page=500", "per_page=500&cursor=next-page"])
   })
 
-  it("saves one redirect as its slash variants without reading or rewriting the list", async () => {
+  it("creates one redirect as its slash variants", async () => {
     const calls = mockCloudflare()
 
-    await saveRedirect(env(), {
+    await createRedirect(env(), {
       source: "/papers",
       destination: "https://example.com/papers",
       code: 302,
     })
 
-    expect(
-      calls.filter((call) => call.path.endsWith(`/rules/lists/${list.id}/items`))
-    ).toEqual([
+    expect(writes(calls)).toEqual([
       {
         method: "POST",
         path: `/client/v4/accounts/${accountId}/rules/lists/${list.id}/items`,
@@ -293,6 +308,77 @@ describe("Cloudflare redirect storage", () => {
         ],
       },
     ])
+  })
+
+  it("refuses to create a redirect for a source that already exists", async () => {
+    const calls = mockCloudflare({ items: [storedItem("old", "/papers")] })
+
+    await expect(
+      createRedirect(env(), {
+        source: "/papers",
+        destination: "https://example.com/new",
+        code: 301,
+      })
+    ).rejects.toMatchObject({
+      message: "A redirect for /papers already exists",
+      status: 409,
+    })
+    expect(writes(calls)).toEqual([])
+  })
+
+  it("updates a redirect in place when its source is unchanged", async () => {
+    const calls = mockCloudflare({ items: [storedItem("old", "/papers")] })
+
+    await updateRedirect(env(), "/papers", {
+      source: "/papers",
+      destination: "https://example.com/new",
+      code: 302,
+    })
+
+    expect(writes(calls).map((call) => call.method)).toEqual(["POST"])
+  })
+
+  it("adds a renamed redirect before deleting the old source", async () => {
+    const calls = mockCloudflare({
+      items: [storedItem("plain", "/old"), storedItem("slash", "/old/")],
+    })
+
+    await updateRedirect(env(), "/old", {
+      source: "/new",
+      destination: "https://example.com/new",
+      code: 301,
+    })
+
+    expect(
+      writes(calls).map(({ method, body }) => ({ method, body }))
+    ).toEqual([
+      {
+        method: "POST",
+        body: [
+          { redirect: expect.objectContaining({ source_url: "shamus.li/new" }) },
+          { redirect: expect.objectContaining({ source_url: "shamus.li/new/" }) },
+        ],
+      },
+      { method: "DELETE", body: { items: [{ id: "plain" }, { id: "slash" }] } },
+    ])
+  })
+
+  it("refuses to rename a redirect onto an existing source", async () => {
+    const calls = mockCloudflare({
+      items: [storedItem("old", "/old"), storedItem("taken", "/taken")],
+    })
+
+    await expect(
+      updateRedirect(env(), "/old", {
+        source: "/taken",
+        destination: "https://example.com/new",
+        code: 301,
+      })
+    ).rejects.toMatchObject({
+      message: "A redirect for /taken already exists",
+      status: 409,
+    })
+    expect(writes(calls)).toEqual([])
   })
 
   it("deletes only the items for one canonical source", async () => {
@@ -352,7 +438,7 @@ describe("Cloudflare redirect storage", () => {
   it("supports hostname values with a scheme and trailing slash", async () => {
     const calls = mockCloudflare()
 
-    await saveRedirect(env({ REDIRECT_HOSTNAME: "https://shamus.li/" }), {
+    await createRedirect(env({ REDIRECT_HOSTNAME: "https://shamus.li/" }), {
       source: "/",
       destination: "https://example.com",
       code: 302,
@@ -377,7 +463,7 @@ describe("Cloudflare redirect storage", () => {
   it("surfaces failed or invalid Cloudflare bulk operations", async () => {
     mockCloudflare({ operationStatuses: ["failed"] })
     await expect(
-      saveRedirect(env(), {
+      createRedirect(env(), {
         source: "/papers",
         destination: "https://example.com",
         code: 301,
@@ -387,7 +473,7 @@ describe("Cloudflare redirect storage", () => {
     vi.unstubAllGlobals()
     mockCloudflare({ missingOperationId: true })
     await expect(
-      saveRedirect(env(), {
+      createRedirect(env(), {
         source: "/papers",
         destination: "https://example.com",
         code: 301,
@@ -484,6 +570,64 @@ describe("redirects API", () => {
       expect(calls).toHaveLength(0)
     }
   )
+
+  it("rejects creating a duplicate source", async () => {
+    mockCloudflare({ items: [storedItem("old", "/papers")] })
+    const response = await onRequestPost(
+      context("http://localhost/redirects/api", {
+        method: "POST",
+        body: {
+          source: "/papers/",
+          destination: "https://example.com/new",
+          code: 301,
+        },
+      })
+    )
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toEqual({
+      error: "A redirect for /papers already exists",
+    })
+  })
+
+  it("updates one redirect by its current source", async () => {
+    const calls = mockCloudflare({ items: [storedItem("old", "/old")] })
+    const response = await onRequestPut(
+      context("http://localhost/redirects/api", {
+        method: "PUT",
+        body: {
+          source: "/old",
+          redirect: {
+            source: "/renamed/",
+            destination: "https://example.com/renamed",
+            code: 302,
+          },
+        },
+      })
+    )
+
+    expect(response.status).toBe(204)
+    expect(writes(calls).map((call) => call.method)).toEqual(["POST", "DELETE"])
+  })
+
+  it("rejects an update without a valid redirect", async () => {
+    const calls = mockCloudflare()
+    const response = await onRequestPut(
+      context("http://localhost/redirects/api", {
+        method: "PUT",
+        body: {
+          source: "/old",
+          redirect: { source: "/old", destination: "/local", code: 301 },
+        },
+      })
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual({
+      error: "Redirect destinations must be absolute HTTP(S) URLs",
+    })
+    expect(calls).toHaveLength(0)
+  })
 
   it("deletes one redirect by source", async () => {
     const calls = mockCloudflare({

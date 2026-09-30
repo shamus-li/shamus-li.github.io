@@ -1,9 +1,10 @@
 import { isRecord, parseRedirect } from "../../redirects/redirect.ts"
 import {
+  createRedirect,
   deleteRedirect,
   HttpError,
   listRedirects,
-  saveRedirect,
+  updateRedirect,
   type RedirectEnv,
 } from "../_lib/cloudflare-redirects.ts"
 
@@ -18,17 +19,16 @@ export function onRequestGet({ env }: Context) {
 
 export function onRequestPost({ request, env }: Context) {
   return respond(async () => {
+    await createRedirect(env, parseBody(await readJson(request)))
+    return noContent()
+  })
+}
+
+export function onRequestPut({ request, env }: Context) {
+  return respond(async () => {
     const body = await readJson(request)
-    let redirect
-    try {
-      redirect = parseRedirect(body)
-    } catch (error) {
-      throw new HttpError(
-        error instanceof Error ? error.message : "Invalid redirect",
-        400
-      )
-    }
-    await saveRedirect(env, redirect)
+    const record = isRecord(body) ? body : {}
+    await updateRedirect(env, parseSource(record.source), parseBody(record.redirect))
     return noContent()
   })
 }
@@ -36,13 +36,27 @@ export function onRequestPost({ request, env }: Context) {
 export function onRequestDelete({ request, env }: Context) {
   return respond(async () => {
     const body = await readJson(request)
-    const source = isRecord(body) ? body.source : undefined
-    if (typeof source !== "string" || !source.trim().startsWith("/")) {
-      throw new HttpError("Redirect sources must start with /", 400)
-    }
-    await deleteRedirect(env, source)
+    await deleteRedirect(env, parseSource(isRecord(body) ? body.source : undefined))
     return noContent()
   })
+}
+
+function parseBody(value: unknown) {
+  try {
+    return parseRedirect(value)
+  } catch (error) {
+    throw new HttpError(
+      error instanceof Error ? error.message : "Invalid redirect",
+      400
+    )
+  }
+}
+
+function parseSource(value: unknown) {
+  if (typeof value !== "string" || !value.trim().startsWith("/")) {
+    throw new HttpError("Redirect sources must start with /", 400)
+  }
+  return value
 }
 
 async function readJson(request: Request): Promise<unknown> {

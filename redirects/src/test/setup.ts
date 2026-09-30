@@ -13,6 +13,11 @@ Object.defineProperty(window, "matchMedia", {
   })),
 })
 
+// Radix Select calls these browser APIs, which jsdom does not implement.
+Element.prototype.hasPointerCapture = () => false
+Element.prototype.releasePointerCapture = () => {}
+Element.prototype.scrollIntoView = () => {}
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
