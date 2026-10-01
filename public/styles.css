@@ -2,18 +2,6 @@
     box-sizing: border-box;
 }
 
-/* Keep the current page on screen until the next one is ready to render,
-   then swap instantly, so the browser's own background never shows. */
-@view-transition {
-    navigation: auto;
-}
-
-::view-transition-group(*),
-::view-transition-old(*),
-::view-transition-new(*) {
-    animation: none;
-}
-
 /* Inter for platforms without San Francisco. */
 @font-face {
     font-family: "Inter";

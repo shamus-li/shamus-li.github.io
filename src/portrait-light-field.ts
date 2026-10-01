@@ -1,6 +1,8 @@
 import portraitWeights from "./portrait-light-field-weights.json"
 
-;(function () {
+// Starts the relightable portrait on the home page and returns a function
+// that stops it.
+export function mountPortrait(): () => void {
   const canvasElement = document.getElementById("portraitRelight")
   const posterElement = document.getElementById("portraitPoster")
   const fieldElement = document.getElementById("relightField")
@@ -13,7 +15,7 @@ import portraitWeights from "./portrait-light-field-weights.json"
     // The basis images are AVIF; without it the poster stays a still image.
     !new URL(posterElement.currentSrc, location.href).pathname.endsWith(".avif")
   )
-    return
+    return () => {}
 
   const canvas = canvasElement
   const poster = posterElement
@@ -49,6 +51,7 @@ import portraitWeights from "./portrait-light-field-weights.json"
   let ready = false
   let dragOffset: Point = { x: 0, y: 0 }
   let raf = 0
+  let disposed = false
 
   const clamp = (value: number, minimum: number, maximum: number) =>
     Math.max(minimum, Math.min(maximum, value))
@@ -150,7 +153,8 @@ import portraitWeights from "./portrait-light-field-weights.json"
                 for (int index = 0; index < ${components}; index++) {
                     color.rgb += weights[index] * (texture2D(basis[index], uv).rgb * 2.0 - 1.0);
                 }
-                gl_FragColor = color;
+                // Premultiplied output, which every browser composites the same way.
+                gl_FragColor = vec4(clamp(color.rgb, 0.0, 1.0) * color.a, color.a);
             }
         `
     )
@@ -189,6 +193,7 @@ import portraitWeights from "./portrait-light-field-weights.json"
   }
 
   function fail(error: unknown) {
+    if (disposed) return
     console.error("Portrait light field unavailable", error)
     field.hidden = true
     canvas.hidden = true
@@ -238,16 +243,19 @@ import portraitWeights from "./portrait-light-field-weights.json"
       depth: false,
       desynchronized: true,
       powerPreference: "high-performance",
-      premultipliedAlpha: false,
       stencil: false,
     })
     if (!gl) throw new Error("WebGL rendering is unavailable")
     initializeRenderer(gl)
     await Promise.all(
       files.map((file, unit) =>
-        loadImage(file).then((bitmap) => uploadTexture(unit, bitmap))
+        loadImage(file).then((bitmap) => {
+          if (disposed) bitmap.close()
+          else uploadTexture(unit, bitmap)
+        })
       )
     )
+    if (disposed) return
     ready = true
     requestRender()
   }
@@ -340,4 +348,12 @@ import portraitWeights from "./portrait-light-field-weights.json"
   field.hidden = false
   resize()
   load().catch(fail)
-})()
+
+  return () => {
+    disposed = true
+    cancelAnimationFrame(raf)
+    window.removeEventListener("resize", resize)
+    window.visualViewport?.removeEventListener("resize", resize)
+    gl?.getExtension("WEBGL_lose_context")?.loseContext()
+  }
+}
